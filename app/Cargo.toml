@@ -1,0 +1,14 @@
+[package]
+name = "fractals"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+render = { path = "../render" }
+eframe.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+wgpu.workspace = true
+log.workspace = true
+env_logger.workspace = true
+anyhow.workspace = true
