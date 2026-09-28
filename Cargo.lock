@@ -842,8 +842,10 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "env_logger",
+ "glam",
  "log",
  "render",
+ "scene",
  "wgpu",
 ]
 
@@ -901,6 +903,15 @@ dependencies = [
  "khronos_api",
  "log",
  "xml-rs",
+]
+
+[[package]]
+name = "glam"
+version = "0.33.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "928452f9c953e142b2f0973e4bd5f34445fcaa8069556ea97a3c9d34d15a4cf8"
+dependencies = [
+ "serde_core",
 ]
 
 [[package]]
@@ -2060,7 +2071,9 @@ name = "render"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "glam",
  "log",
+ "scene",
  "wgpu",
 ]
 
@@ -2144,6 +2157,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "scene"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "serde",
 ]
 
 [[package]]

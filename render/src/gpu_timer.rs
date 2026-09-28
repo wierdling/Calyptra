@@ -1,5 +1,4 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::readback::Readback;
 
 /// GPU time spent in each pass of the most recently measured frame.
 #[derive(Clone, Copy, Debug, Default)]
@@ -25,10 +24,8 @@ const BUFFER_SIZE: u64 = QUERY_COUNT as u64 * size_of::<u64>() as u64;
 pub(crate) struct GpuTimer {
     query_set: wgpu::QuerySet,
     resolve_buffer: wgpu::Buffer,
-    readback_buffer: wgpu::Buffer,
+    readback: Readback,
     period_ns: f32,
-    in_flight: bool,
-    ready: Arc<AtomicBool>,
     latest: Option<GpuTimings>,
 }
 
@@ -49,26 +46,18 @@ impl GpuTimer {
             usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
-        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("timestamp readback"),
-            size: BUFFER_SIZE,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         Some(Self {
             query_set,
             resolve_buffer,
-            readback_buffer,
+            readback: Readback::new(device, "timestamp readback", BUFFER_SIZE),
             period_ns: queue.get_timestamp_period(),
-            in_flight: false,
-            ready: Arc::new(AtomicBool::new(false)),
             latest: None,
         })
     }
 
     /// Timestamp writes for `pass`, or `None` if this frame is not being timed.
     pub fn pass_writes(&self, pass: Pass) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
-        if self.in_flight {
+        if !self.readback.is_idle() {
             return None;
         }
         let base = pass as u32 * 2;
@@ -80,57 +69,32 @@ impl GpuTimer {
     }
 
     /// Records the query resolve; call after all timed passes are encoded.
-    pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
-        if self.in_flight {
+    pub fn resolve(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        if !self.readback.is_idle() {
             return;
         }
         encoder.resolve_query_set(&self.query_set, 0..QUERY_COUNT, &self.resolve_buffer, 0);
-        encoder.copy_buffer_to_buffer(
-            &self.resolve_buffer,
-            0,
-            &self.readback_buffer,
-            0,
-            BUFFER_SIZE,
-        );
+        self.readback.copy_from(encoder, &self.resolve_buffer);
     }
 
     /// Starts the async readback; call right after the frame is submitted.
     pub fn after_submit(&mut self) {
-        if self.in_flight {
-            return;
-        }
-        self.in_flight = true;
-        let ready = Arc::clone(&self.ready);
-        self.readback_buffer
-            .map_async(wgpu::MapMode::Read, .., move |result| {
-                if result.is_ok() {
-                    ready.store(true, Ordering::Release);
-                }
-            });
+        self.readback.after_submit();
     }
 
     /// Collects a finished measurement, if any. Never blocks.
     pub fn poll(&mut self, device: &wgpu::Device) {
-        if !self.in_flight {
+        let Some(ticks) = self.readback.try_read::<u64>(device) else {
             return;
-        }
-        let _ = device.poll(wgpu::PollType::Poll);
-        if !self.ready.swap(false, Ordering::Acquire) {
-            return;
-        }
-        if let Ok(data) = self.readback_buffer.get_mapped_range(..) {
-            let ticks: &[u64] = bytemuck::cast_slice(&data);
-            let ms = |pass: Pass| {
-                let i = pass as usize * 2;
-                ticks[i + 1].saturating_sub(ticks[i]) as f32 * self.period_ns / 1.0e6
-            };
-            self.latest = Some(GpuTimings {
-                render_ms: ms(Pass::Render),
-                display_ms: ms(Pass::Display),
-            });
-        }
-        self.readback_buffer.unmap();
-        self.in_flight = false;
+        };
+        let ms = |pass: Pass| {
+            let i = pass as usize * 2;
+            ticks[i + 1].saturating_sub(ticks[i]) as f32 * self.period_ns / 1.0e6
+        };
+        self.latest = Some(GpuTimings {
+            render_ms: ms(Pass::Render),
+            display_ms: ms(Pass::Display),
+        });
     }
 
     pub fn latest(&self) -> Option<GpuTimings> {

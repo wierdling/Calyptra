@@ -39,11 +39,20 @@ impl HdrTarget {
 
 /// Per-frame information handed to a renderer.
 #[derive(Clone, Copy, Debug)]
-pub struct FrameInput {
-    /// Seconds since the app started (or animation time, once there is a timeline).
-    pub time: f32,
+pub struct FrameInput<'a> {
+    pub scene: &'a scene::Scene,
     /// Monotonic frame counter; useful for progressive sampling and noise seeds.
     pub frame: u32,
+}
+
+/// Geometry measurements taken at the camera, read back from the GPU a
+/// frame or two late.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Probe {
+    /// Distance estimate at the camera position (distance to the nearest surface).
+    pub distance: f32,
+    /// Distance along the view direction to the surface, if the center ray hits.
+    pub center_hit: Option<f32>,
 }
 
 /// A rendering back-end (raymarch preview, path tracer, flame, ...).
@@ -60,7 +69,15 @@ pub trait Renderer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         target: &HdrTarget,
-        input: &FrameInput,
+        input: &FrameInput<'_>,
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     );
+
+    /// Collects finished asynchronous GPU readbacks. Never blocks.
+    fn poll(&mut self, _device: &wgpu::Device) {}
+
+    /// Latest camera probe, if this renderer supports one.
+    fn probe(&self) -> Option<Probe> {
+        None
+    }
 }

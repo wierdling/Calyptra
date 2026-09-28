@@ -1,18 +1,35 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use render::{DisplaySettings, TestPattern, ToneMap, Viewport};
+use render::{DisplaySettings, MandelbulbRenderer, ToneMap, Viewport};
+use scene::Scene;
+
+use crate::camera_control::{CameraController, CameraMode, NavInput};
+
+const SCENE_KEY: &str = "scene";
+/// How long after the last interaction before rendering at full resolution.
+const SETTLE_TIME: Duration = Duration::from_millis(150);
+
+/// What the current viewport image was rendered from.
+#[derive(PartialEq)]
+struct RenderedState {
+    scene: Scene,
+    display: DisplaySettings,
+    size: (u32, u32),
+}
 
 pub struct FractalApp {
+    scene: Scene,
+    camera_control: CameraController,
     viewport: Viewport,
     renderer: Box<dyn render::Renderer>,
     texture_id: egui::TextureId,
     display: DisplaySettings,
     /// Render resolution relative to the physical pixel size of the view.
     resolution_scale: f32,
-    paused: bool,
-    time: f32,
-    last_frame: Instant,
-    frame_ms: f32,
+    /// Resolution scale used while the camera is moving.
+    interactive_scale: f32,
+    last_interaction: Instant,
+    rendered: Option<RenderedState>,
     adapter_summary: String,
 }
 
@@ -26,6 +43,11 @@ impl FractalApp {
         let adapter_summary = format!("{} ({:?})", info.name, info.backend);
         log::info!("GPU: {adapter_summary}");
 
+        let scene = cc
+            .storage
+            .and_then(|storage| eframe::get_value(storage, SCENE_KEY))
+            .unwrap_or_default();
+
         let viewport = Viewport::new(&rs.device, &rs.queue, 64, 64);
         let texture_id = rs.renderer.write().register_native_texture(
             &rs.device,
@@ -33,15 +55,16 @@ impl FractalApp {
             wgpu::FilterMode::Linear,
         );
         Ok(Self {
-            renderer: Box::new(TestPattern::new(&rs.device)),
+            scene,
+            camera_control: CameraController::default(),
+            renderer: Box::new(MandelbulbRenderer::new(&rs.device)),
             viewport,
             texture_id,
             display: DisplaySettings::default(),
             resolution_scale: 1.0,
-            paused: false,
-            time: 0.0,
-            last_frame: Instant::now(),
-            frame_ms: 0.0,
+            interactive_scale: 0.5,
+            last_interaction: Instant::now(),
+            rendered: None,
             adapter_summary,
         })
     }
@@ -51,8 +74,135 @@ impl FractalApp {
         ui.label(format!("Renderer: {}", self.renderer.name()));
         ui.separator();
 
-        egui::CollapsingHeader::new("Display")
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            self.camera_section(ui);
+            self.fractal_section(ui);
+            self.shading_section(ui);
+            self.quality_section(ui);
+            self.display_section(ui);
+            self.performance_section(ui);
+        });
+    }
+
+    fn camera_section(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Camera").default_open(true).show(ui, |ui| {
+            let mut mode = self.camera_control.mode;
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut mode, CameraMode::Orbit, "Orbit");
+                ui.selectable_value(&mut mode, CameraMode::Fly, "Fly");
+            });
+            self.camera_control
+                .set_mode(mode, &mut self.scene.camera, self.renderer.probe());
+
+            match mode {
+                CameraMode::Orbit => {
+                    ui.small("Left-drag: orbit · Right-drag: pan · Wheel: zoom");
+                }
+                CameraMode::Fly => {
+                    ui.small("Drag: look · WASD: move · R/F: up/down · Q/E: roll · Shift: fast · Wheel: speed");
+                    ui.add(
+                        egui::Slider::new(&mut self.camera_control.fly_speed, 0.01..=100.0)
+                            .logarithmic(true)
+                            .text("Fly speed"),
+                    );
+                }
+            }
+            ui.add(
+                egui::Slider::new(&mut self.scene.camera.fov_y_degrees, 10.0..=120.0)
+                    .text("Field of view"),
+            );
+            let p = self.scene.camera.position;
+            ui.label(format!("Position: {:.5}, {:.5}, {:.5}", p.x, p.y, p.z));
+            if let Some(probe) = self.renderer.probe() {
+                ui.label(format!("Surface distance: {:.3e}", probe.distance));
+            }
+            if ui.button("Reset camera").clicked() {
+                self.scene.camera = scene::Camera::default();
+                self.camera_control.orbit_target = glam::DVec3::ZERO;
+            }
+        });
+    }
+
+    fn fractal_section(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Mandelbulb")
             .default_open(true)
+            .show(ui, |ui| {
+                let m = &mut self.scene.mandelbulb;
+                ui.add(egui::Slider::new(&mut m.power, 1.0..=16.0).text("Power"));
+                ui.add(egui::Slider::new(&mut m.iterations, 1..=64).text("Iterations"));
+                ui.add(egui::Slider::new(&mut m.bailout, 1.5..=16.0).text("Bailout"));
+                if ui.button("Reset fractal").clicked() {
+                    *m = Default::default();
+                }
+            });
+    }
+
+    fn shading_section(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Shading")
+            .default_open(true)
+            .show(ui, |ui| {
+                let s = &mut self.scene.shading;
+                ui.add(
+                    egui::Slider::new(&mut s.light_azimuth_degrees, -180.0..=180.0)
+                        .text("Light azimuth"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut s.light_elevation_degrees, -90.0..=90.0)
+                        .text("Light elevation"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut s.light_intensity, 0.0..=10.0).text("Light intensity"),
+                );
+                ui.add(egui::Slider::new(&mut s.ambient, 0.0..=2.0).text("Ambient"));
+                ui.add(egui::Slider::new(&mut s.specular, 0.0..=4.0).text("Specular"));
+                ui.add(egui::Slider::new(&mut s.ao_strength, 0.0..=4.0).text("Ambient occlusion"));
+                ui.add(
+                    egui::Slider::new(&mut s.fog_density, 0.0..=1.0)
+                        .logarithmic(true)
+                        .text("Fog"),
+                );
+                ui.add(egui::Slider::new(&mut s.palette_offset, 0.0..=1.0).text("Palette offset"));
+                ui.add(
+                    egui::Slider::new(&mut s.palette_frequency, 0.1..=8.0)
+                        .text("Palette frequency"),
+                );
+                if ui.button("Reset shading").clicked() {
+                    *s = Default::default();
+                }
+            });
+    }
+
+    fn quality_section(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Quality")
+            .default_open(false)
+            .show(ui, |ui| {
+                let q = &mut self.scene.quality;
+                ui.add(
+                    egui::Slider::new(&mut q.max_steps, 32..=2048)
+                        .logarithmic(true)
+                        .text("Max steps"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut q.detail, 0.05..=8.0)
+                        .logarithmic(true)
+                        .text("Detail (px)"),
+                );
+                ui.add(egui::Slider::new(&mut q.step_factor, 0.1..=1.0).text("Step factor"));
+                ui.add(egui::Slider::new(&mut q.max_distance, 1.0..=100.0).text("Max distance"));
+                ui.add(
+                    egui::Slider::new(&mut self.resolution_scale, 0.25..=2.0)
+                        .text("Resolution scale"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.interactive_scale, 0.1..=1.0)
+                        .text("Resolution while moving"),
+                );
+            });
+    }
+
+    fn display_section(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Display")
+            .default_open(false)
             .show(ui, |ui| {
                 ui.add(
                     egui::Slider::new(&mut self.display.exposure_ev, -5.0..=5.0)
@@ -66,31 +216,16 @@ impl FractalApp {
                         ui.selectable_value(&mut self.display.tone_map, ToneMap::Clamp, "Clamp");
                     });
                 ui.checkbox(&mut self.display.dither, "Dither");
-                ui.add(
-                    egui::Slider::new(&mut self.resolution_scale, 0.25..=1.0)
-                        .text("Resolution scale")
-                        .step_by(0.05),
-                );
             });
+    }
 
-        egui::CollapsingHeader::new("Animation")
-            .default_open(true)
-            .show(ui, |ui| {
-                ui.checkbox(&mut self.paused, "Paused");
-                ui.label(format!("t = {:.2} s", self.time));
-            });
-
+    fn performance_section(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("Performance")
             .default_open(true)
             .show(ui, |ui| {
                 let (w, h) = self.viewport.size();
                 ui.label(&self.adapter_summary);
                 ui.label(format!("Render size: {w} × {h}"));
-                ui.label(format!(
-                    "Frame: {:.2} ms ({:.0} fps)",
-                    self.frame_ms,
-                    1000.0 / self.frame_ms.max(0.001)
-                ));
                 match self.viewport.gpu_timings() {
                     Some(t) => {
                         ui.label(format!("GPU render: {:.2} ms", t.render_ms));
@@ -105,58 +240,93 @@ impl FractalApp {
                 }
             });
     }
+
+    fn viewport_ui(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
+        let rect = ui.available_rect_before_wrap();
+        let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+        let probe = self.renderer.probe();
+        let input = NavInput::gather(&response, ui.ctx());
+        let navigating = self
+            .camera_control
+            .update(&mut self.scene.camera, &input, probe);
+        let now = Instant::now();
+        if navigating {
+            self.last_interaction = now;
+        }
+
+        let Some(rs) = frame.wgpu_render_state() else {
+            return;
+        };
+        self.viewport.poll(&rs.device, self.renderer.as_mut());
+
+        // Cheap preview while moving, full resolution once settled.
+        let settled = now.duration_since(self.last_interaction) >= SETTLE_TIME;
+        let scale = if settled {
+            self.resolution_scale
+        } else {
+            self.interactive_scale.min(self.resolution_scale)
+        };
+        let pixels = ui.ctx().pixels_per_point() * scale;
+        let size = (
+            ((rect.width() * pixels).round() as u32).max(1),
+            ((rect.height() * pixels).round() as u32).max(1),
+        );
+
+        let state = RenderedState {
+            scene: self.scene.clone(),
+            display: self.display,
+            size,
+        };
+        if self.rendered.as_ref() != Some(&state) {
+            if self.viewport.resize(&rs.device, size.0, size.1) {
+                rs.renderer.write().update_egui_texture_from_wgpu_texture(
+                    &rs.device,
+                    self.viewport.display_view(),
+                    wgpu::FilterMode::Linear,
+                    self.texture_id,
+                );
+            }
+            self.viewport.render(
+                &rs.device,
+                &rs.queue,
+                self.renderer.as_mut(),
+                &self.scene,
+                &self.display,
+            );
+            self.rendered = Some(state);
+        }
+
+        ui.painter().image(
+            self.texture_id,
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+
+        if navigating {
+            ui.ctx().request_repaint();
+        } else if !settled {
+            // Wake up to render the full-resolution frame.
+            ui.ctx().request_repaint_after(SETTLE_TIME);
+        } else {
+            // Idle: only poll for GPU readbacks (timings, probe).
+            ui.ctx().request_repaint_after(Duration::from_millis(250));
+        }
+    }
 }
 
 impl eframe::App for FractalApp {
     fn ui(&mut self, root: &mut egui::Ui, frame: &mut eframe::Frame) {
-        let ctx = root.ctx().clone();
-        let now = Instant::now();
-        let dt = now.duration_since(self.last_frame).as_secs_f32();
-        self.last_frame = now;
-        // Exponential smoothing so the readout is legible.
-        self.frame_ms += (dt * 1000.0 - self.frame_ms) * 0.1;
-        if !self.paused {
-            self.time += dt;
-        }
-
         egui::Panel::left("controls")
-            .default_size(260.0)
+            .default_size(300.0)
             .show(root, |ui| self.side_panel(ui));
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(root, |ui| {
-                let rect = ui.available_rect_before_wrap();
-                let scale = ctx.pixels_per_point() * self.resolution_scale;
-                let width = (rect.width() * scale).round() as u32;
-                let height = (rect.height() * scale).round() as u32;
+            .show(root, |ui| self.viewport_ui(ui, frame));
+    }
 
-                let Some(rs) = frame.wgpu_render_state() else {
-                    return;
-                };
-                if self.viewport.resize(&rs.device, width, height) {
-                    rs.renderer.write().update_egui_texture_from_wgpu_texture(
-                        &rs.device,
-                        self.viewport.display_view(),
-                        wgpu::FilterMode::Linear,
-                        self.texture_id,
-                    );
-                }
-                self.viewport.render(
-                    &rs.device,
-                    &rs.queue,
-                    self.renderer.as_mut(),
-                    self.time,
-                    &self.display,
-                );
-                ui.painter().image(
-                    self.texture_id,
-                    rect,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
-            });
-
-        ctx.request_repaint();
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, SCENE_KEY, &self.scene);
     }
 }

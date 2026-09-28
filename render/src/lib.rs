@@ -7,13 +7,14 @@
 
 mod display;
 mod gpu_timer;
+mod mandelbulb;
+mod readback;
 mod renderer;
-mod test_pattern;
 mod viewport;
 
 pub use gpu_timer::GpuTimings;
-pub use renderer::{FrameInput, HDR_FORMAT, HdrTarget, Renderer};
-pub use test_pattern::TestPattern;
+pub use mandelbulb::MandelbulbRenderer;
+pub use renderer::{FrameInput, HDR_FORMAT, HdrTarget, Probe, Renderer};
 pub use viewport::{DISPLAY_FORMAT, DisplaySettings, ToneMap, Viewport};
 
 /// Vertex shader shared by all full-screen passes. Prepended to fragment
@@ -68,4 +69,31 @@ pub(crate) fn fullscreen_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use wgpu::naga;
+
+    fn validate(fragment_src: &str) {
+        let source = format!("{}\n{fragment_src}", super::FULLSCREEN_WGSL);
+        let module = naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+    }
+
+    #[test]
+    fn display_shader_is_valid() {
+        validate(include_str!("shaders/display.wgsl"));
+    }
+
+    #[test]
+    fn mandelbulb_shader_is_valid() {
+        validate(include_str!("shaders/mandelbulb.wgsl"));
+    }
 }

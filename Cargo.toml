@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["app", "render"]
+members = ["app", "render", "scene"]
 
 [workspace.package]
 edition = "2024"
@@ -12,7 +12,8 @@ eframe = { version = "0.36", default-features = false, features = ["wgpu", "defa
 egui = "0.36"
 egui-wgpu = "0.36"
 bytemuck = { version = "1", features = ["derive"] }
-glam = "0.33"
+glam = { version = "0.33", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
 log = "0.4"
 env_logger = "0.11"
 anyhow = "1"

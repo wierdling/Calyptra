@@ -34,7 +34,7 @@ with good tone mapping (AgX/ACES), supersampling and dithering, 16-bit/EXR outpu
 ```
 fractals/
 ├─ app/        egui + wgpu window: viewport, panels, timeline UI, render queue
-├─ core/       scene model (serde), parameters, camera, keyframes & interpolation
+├─ scene/      scene model (serde), parameters, camera, keyframes & interpolation
 ├─ formulas/   formula registry + WGSL snippet library + shader composer
 ├─ render/     Renderer trait; raymarch preview, path tracer, (later) flame
 ├─ color/      gradients (OKLab), palette library, .ugr/.map/.ggr import
@@ -77,7 +77,7 @@ Julia, Amazing Surf, Pseudo-Kleinian, Juliabulb.
 | # | Milestone | Deliverable |
 |---|---|---|
 | **M0** ✅ | Workspace, egui + wgpu window, offscreen full-screen shader, GPU timing | Window with a live shader |
-| **M1** | Mandelbulb raymarcher, orbit + fly camera, basic shading, parameter panel | Fly around a Mandelbulb |
+| **M1** ✅ | Mandelbulb raymarcher, orbit + fly camera, basic shading, parameter panel | Fly around a Mandelbulb |
 | **M2** | Formula library, hybrids, shader composer, hot reload | Mix Mandelbox + Mandelbulb |
 | **M3** | Lighting & color: AO, soft shadows, fog, glow, orbit-trap coloring, OKLab gradient editor, palette presets | Genuinely pretty pictures |
 | **M4** | Hi-res stills: tiled rendering, supersampling, PNG16/EXR, scene save/load | Print-quality images |

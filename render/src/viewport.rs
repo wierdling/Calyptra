@@ -11,7 +11,7 @@ pub enum ToneMap {
     Aces,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DisplaySettings {
     /// Exposure in stops; 0 leaves the image unchanged.
     pub exposure_ev: f32,
@@ -85,24 +85,31 @@ impl Viewport {
         self.timer.as_ref().and_then(GpuTimer::latest)
     }
 
+    /// Collects finished asynchronous readbacks (timings, probes). Cheap;
+    /// call every UI frame, including frames that do not render.
+    pub fn poll(&mut self, device: &wgpu::Device, renderer: &mut dyn Renderer) {
+        if let Some(timer) = &mut self.timer {
+            timer.poll(device);
+        }
+        renderer.poll(device);
+    }
+
     /// Renders one frame and submits it.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         renderer: &mut dyn Renderer,
-        time: f32,
+        scene: &scene::Scene,
         settings: &DisplaySettings,
     ) {
-        if let Some(timer) = &mut self.timer {
-            timer.poll(device);
-        }
+        self.poll(device, renderer);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("viewport frame"),
         });
         let input = FrameInput {
-            time,
+            scene,
             frame: self.frame,
         };
         let timer = self.timer.as_ref();
@@ -122,7 +129,7 @@ impl Viewport {
             self.frame,
             timer.and_then(|t| t.pass_writes(Pass::Display)),
         );
-        if let Some(timer) = timer {
+        if let Some(timer) = &mut self.timer {
             timer.resolve(&mut encoder);
         }
         queue.submit([encoder.finish()]);
