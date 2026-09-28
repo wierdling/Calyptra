@@ -1,5 +1,43 @@
-use crate::viewport::{DISPLAY_FORMAT, DisplaySettings, ToneMap};
+use crate::viewport::DISPLAY_FORMAT;
 use crate::{HdrTarget, fullscreen_pipeline, fullscreen_shader};
+use scene::{DisplaySettings, ToneMap};
+
+/// CPU version of `display.wgsl` (without dithering), used for image
+/// export: linear HDR → exposure → tone map → sRGB-encoded [0, 1].
+/// Keep the two in sync.
+pub fn display_transform(linear: [f32; 3], settings: &DisplaySettings) -> [f32; 3] {
+    let exposure = settings.exposure_ev.exp2();
+    let color = linear.map(|c| c * exposure);
+    let mapped = match settings.tone_map {
+        ToneMap::Clamp => color,
+        ToneMap::Aces => aces_fitted(color),
+    };
+    mapped.map(color::linear_to_srgb)
+}
+
+/// Stephen Hill's fitted ACES, as in `display.wgsl`.
+fn aces_fitted(c: [f32; 3]) -> [f32; 3] {
+    // Row-major equivalents of the column-major WGSL matrices.
+    const ACES_IN: [[f32; 3]; 3] = [
+        [0.59719, 0.35458, 0.04823],
+        [0.07600, 0.90834, 0.01566],
+        [0.02840, 0.13383, 0.83777],
+    ];
+    const ACES_OUT: [[f32; 3]; 3] = [
+        [1.60475, -0.53108, -0.07367],
+        [-0.10208, 1.10813, -0.00605],
+        [-0.00327, -0.07276, 1.07602],
+    ];
+    let mul =
+        |m: &[[f32; 3]; 3], v: [f32; 3]| m.map(|row| row[0] * v[0] + row[1] * v[1] + row[2] * v[2]);
+    let v = mul(&ACES_IN, c);
+    let fitted = v.map(|x| {
+        let a = x * (x + 0.024_578_6) - 0.000_090_537;
+        let b = x * (0.983_729 * x + 0.432_951) + 0.238_081;
+        a / b
+    });
+    mul(&ACES_OUT, fitted)
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]

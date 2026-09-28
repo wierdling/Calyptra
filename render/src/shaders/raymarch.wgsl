@@ -15,7 +15,8 @@ struct Uniforms {
     background_top: vec4<f32>,
     background_bottom: vec4<f32>,
     julia_c: vec4<f32>,         // xyz = Julia constant, w > 0.5 = Julia mode
-    resolution: vec2<f32>,
+    resolution: vec2<f32>,      // full image size in pixels
+    pixel_offset: vec2<f32>,    // added to the target pixel index (tile origin + sample position)
     bailout: f32,
     iterations: u32,
     max_steps: u32,
@@ -33,7 +34,9 @@ struct Uniforms {
     color_frequency: f32,
     color_source: u32,          // see scene::ColorSource
     color_wrap: u32,            // 0 repeat, 1 mirror, 2 clamp
-    _pad: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
     slot_params: array<vec4<f32>, 16>,
 };
 
@@ -140,7 +143,9 @@ fn march(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
     return result;
 }
 
-fn ray_dir(uv: vec2<f32>) -> vec3<f32> {
+// `pixel` is a continuous position in the full image, (0, 0) = top-left corner.
+fn ray_dir(pixel: vec2<f32>) -> vec3<f32> {
+    let uv = pixel / u.resolution;
     let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     return normalize(u.cam_forward.xyz + ndc.x * u.cam_right.xyz + ndc.y * u.cam_up.xyz);
 }
@@ -148,7 +153,7 @@ fn ray_dir(uv: vec2<f32>) -> vec3<f32> {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let ro = u.cam_pos.xyz;
-    let rd = ray_dir(in.uv);
+    let rd = ray_dir(floor(in.position.xy) + u.pixel_offset);
     let hit = march(ro, rd);
     let sky = background(rd);
     if !hit.hit {
@@ -204,7 +209,7 @@ fn probe_main(@builtin(local_invocation_id) id: vec3<u32>) {
         let center = march(ro, normalize(u.cam_forward.xyz));
         probe_out[1] = select(-1.0, center.t, center.hit);
     }
-    let rd = ray_dir((vec2<f32>(id.xy) + 0.5) / f32(PROBE_GRID));
+    let rd = ray_dir((vec2<f32>(id.xy) + 0.5) / f32(PROBE_GRID) * u.resolution);
     let hit = march(ro, rd);
     var value = PROBE_MISS;
     if hit.hit {

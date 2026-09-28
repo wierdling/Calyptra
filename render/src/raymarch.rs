@@ -3,8 +3,8 @@ use scene::{ColorSource, Fractal, Wrap};
 use crate::hot_reload::WatchedFile;
 use crate::readback::Readback;
 use crate::{
-    FULLSCREEN_WGSL, FrameInput, HDR_FORMAT, HdrTarget, Probe, Renderer, fullscreen_pipeline,
-    validate_wgsl,
+    FULLSCREEN_WGSL, FrameInput, HDR_FORMAT, HdrTarget, Probe, Region, Renderer,
+    fullscreen_pipeline, validate_wgsl,
 };
 
 const PARAM_VEC4S: usize = Fractal::MAX_SLOTS * Fractal::MAX_PARAMS / 4;
@@ -24,6 +24,7 @@ struct Uniforms {
     background_bottom: [f32; 4],
     julia_c: [f32; 4],
     resolution: [f32; 2],
+    pixel_offset: [f32; 2],
     bailout: f32,
     iterations: u32,
     max_steps: u32,
@@ -41,12 +42,13 @@ struct Uniforms {
     color_frequency: f32,
     color_source: u32,
     color_wrap: u32,
-    _pad: f32,
+    _pad: [f32; 3],
     slot_params: [[f32; 4]; PARAM_VEC4S],
 }
 
 impl Uniforms {
-    fn new(scene: &scene::Scene, width: u32, height: u32) -> Self {
+    fn new(scene: &scene::Scene, region: &Region) -> Self {
+        let (width, height) = (region.full_width, region.full_height);
         let camera = &scene.camera;
         let fractal = &scene.fractal;
         let shading = &scene.shading;
@@ -84,6 +86,7 @@ impl Uniforms {
                 .extend(if fractal.julia { 1.0 } else { 0.0 })
                 .into(),
             resolution: [width as f32, height as f32],
+            pixel_offset: region.pixel_offset,
             bailout: fractal.bailout,
             iterations: fractal.iterations,
             max_steps: scene.quality.max_steps,
@@ -115,7 +118,7 @@ impl Uniforms {
                 Wrap::Mirror => 1,
                 Wrap::Clamp => 2,
             },
-            _pad: 0.0,
+            _pad: [0.0; 3],
             slot_params,
         }
     }
@@ -406,7 +409,7 @@ impl Renderer for RaymarchRenderer {
         input: &FrameInput<'_>,
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
-        let uniforms = Uniforms::new(input.scene, target.width, target.height);
+        let uniforms = Uniforms::new(input.scene, &input.region);
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         self.upload_gradient(queue, &input.scene.coloring.gradient);
 
@@ -462,5 +465,37 @@ impl Renderer for RaymarchRenderer {
 
     fn probe(&self) -> Option<Probe> {
         self.probe
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wgpu::naga;
+
+    fn wgsl_struct_size(source: &str, name: &str) -> u32 {
+        let module = naga::front::wgsl::parse_str(source).unwrap();
+        let mut layouter = naga::proc::Layouter::default();
+        layouter.update(module.to_ctx()).unwrap();
+        let (handle, _) = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("no struct {name}"));
+        layouter[handle].size
+    }
+
+    #[test]
+    fn uniforms_match_wgsl_layout() {
+        let library = formulas::Library::builtin().unwrap();
+        let de = formulas::compose(&Fractal::default(), &library).unwrap();
+        let source = format!(
+            "{FULLSCREEN_WGSL}\n{}\n{de}",
+            include_str!("shaders/raymarch.wgsl")
+        );
+        assert_eq!(
+            wgsl_struct_size(&source, "Uniforms") as usize,
+            size_of::<Uniforms>()
+        );
     }
 }

@@ -16,6 +16,7 @@ pub struct Scene {
     pub quality: Quality,
     pub shading: Shading,
     pub coloring: Coloring,
+    pub display: DisplaySettings,
 }
 
 /// Right-handed, Y-up. The camera looks down its local -Z axis.
@@ -219,6 +220,34 @@ impl Shading {
         let az = self.light_azimuth_degrees.to_radians();
         let el = self.light_elevation_degrees.to_radians();
         glam::Vec3::new(el.cos() * az.sin(), el.sin(), el.cos() * az.cos())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToneMap {
+    Clamp,
+    #[default]
+    Aces,
+}
+
+/// How linear HDR becomes a displayable image.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DisplaySettings {
+    /// Exposure in stops; 0 leaves the image unchanged.
+    pub exposure_ev: f32,
+    pub tone_map: ToneMap,
+    /// Hide 8-bit banding with ±1 LSB noise.
+    pub dither: bool,
+}
+
+impl Default for DisplaySettings {
+    fn default() -> Self {
+        Self {
+            exposure_ev: 0.0,
+            tone_map: ToneMap::Aces,
+            dither: true,
+        }
     }
 }
 

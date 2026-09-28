@@ -1,33 +1,9 @@
 use crate::display::DisplayPass;
 use crate::gpu_timer::{GpuTimer, GpuTimings, Pass};
-use crate::{FrameInput, HdrTarget, Renderer};
+use crate::{FrameInput, HdrTarget, Region, Renderer};
 
 /// Format of the texture shown in the UI (gamma-encoded, as egui expects).
 pub const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ToneMap {
-    Clamp,
-    Aces,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DisplaySettings {
-    /// Exposure in stops; 0 leaves the image unchanged.
-    pub exposure_ev: f32,
-    pub tone_map: ToneMap,
-    pub dither: bool,
-}
-
-impl Default for DisplaySettings {
-    fn default() -> Self {
-        Self {
-            exposure_ev: 0.0,
-            tone_map: ToneMap::Aces,
-            dither: true,
-        }
-    }
-}
 
 /// Owns the offscreen targets for one on-screen view and drives a
 /// [`Renderer`] into them.
@@ -149,16 +125,17 @@ impl Viewport {
         queue: &wgpu::Queue,
         renderer: &mut dyn Renderer,
         scene: &scene::Scene,
-        settings: &DisplaySettings,
     ) {
         self.poll(device, renderer);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("viewport frame"),
         });
+        let (width, height) = self.size();
         let input = FrameInput {
             scene,
             frame: self.frame,
+            region: Region::full(width, height),
         };
         let timer = self.timer.as_ref();
         renderer.render(
@@ -173,7 +150,7 @@ impl Viewport {
             queue,
             &mut encoder,
             &self.display_view,
-            settings,
+            &scene.display,
             self.frame,
             timer.and_then(|t| t.pass_writes(Pass::Display)),
         );

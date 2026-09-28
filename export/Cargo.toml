@@ -1,0 +1,18 @@
+[package]
+name = "export"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+render = { path = "../render" }
+scene = { path = "../scene" }
+serde.workspace = true
+# Exact float parsing: reloaded cameras must match bit for bit.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+png = "0.18"
+exr = "1.74"
+
+[dev-dependencies]
+formulas = { path = "../formulas" }
+wgpu.workspace = true
+pollster = "1"

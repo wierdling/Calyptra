@@ -5,7 +5,9 @@
 
 use std::path::Path;
 
-use render::{DisplaySettings, RaymarchRenderer, Renderer, Viewport};
+use render::{
+    RaymarchRenderer, Renderer, StillSettings, Viewport, display_transform, render_still,
+};
 
 struct Gpu {
     device: wgpu::Device,
@@ -103,20 +105,39 @@ fn render(
     if let Some(error) = renderer.error() {
         return Err(error.into());
     }
+
+    // Measure first: fit the gradient to the visible values, as the app does.
     let mut viewport = Viewport::new(&gpu.device, &gpu.queue, width, height);
-    let display = DisplaySettings::default();
-    // First pass only measures: fit the gradient to the visible values, as
-    // the app does, then render for real.
-    viewport.render(&gpu.device, &gpu.queue, renderer, &scene, &display);
-    let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
-    renderer.poll(&gpu.device);
-    let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
-    renderer.poll(&gpu.device);
+    viewport.render(&gpu.device, &gpu.queue, renderer, &scene);
+    for _ in 0..2 {
+        let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        renderer.poll(&gpu.device);
+    }
     if let Some((lo, hi)) = renderer.probe().and_then(|p| p.color_range) {
         scene.coloring.fit_to_range(lo, hi);
     }
-    viewport.render(&gpu.device, &gpu.queue, renderer, &scene, &display);
-    Ok(viewport.read_display_pixels(&gpu.device, &gpu.queue))
+
+    // Then the real render through the export path (tiled, 4 samples).
+    let settings = StillSettings {
+        width,
+        height,
+        samples: 4,
+    };
+    let image = render_still(&gpu.device, &gpu.queue, renderer, &scene, settings, |_| {
+        true
+    })
+    .ok_or("cancelled")?;
+    Ok(image
+        .pixels
+        .iter()
+        .flat_map(|&[r, g, b, _]| {
+            let [r, g, b] = display_transform([r, g, b], &scene.display);
+            [r, g, b]
+                .map(|c| (c * 255.0).round() as u8)
+                .into_iter()
+                .chain([255])
+        })
+        .collect())
 }
 
 fn write_png(

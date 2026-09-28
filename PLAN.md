@@ -86,7 +86,7 @@ every preset headlessly to `renders/presets/`.
 | **M1** ✅ | Mandelbulb raymarcher, orbit + fly camera, basic shading, parameter panel | Fly around a Mandelbulb |
 | **M2** ✅ | Formula library, hybrids, shader composer, hot reload | Mix Mandelbox + Mandelbulb |
 | **M3** ✅ | Lighting & color: AO, soft shadows, fog, glow, orbit-trap coloring, OKLab gradient editor, palette presets | Genuinely pretty pictures |
-| **M4** | Hi-res stills: tiled rendering, supersampling, PNG16/EXR, scene save/load | Print-quality images |
+| **M4** ✅ | Hi-res stills: tiled rendering, supersampling, PNG16/EXR, scene save/load | Print-quality images |
 | **M5** | Path tracer: progressive, DOF, environment light, tone mapping, OIDN denoise | Photoreal renders |
 | **M6** | Animation: timeline, keyframes, Catmull-Rom camera splines, easing, preview, resumable render queue, ffmpeg | Movies |
 | **M7** | Custom formulas: user WGSL snippets, hot reload, in-UI error reporting | Your own formulas |
@@ -105,6 +105,18 @@ every preset headlessly to `renders/presets/`.
   `.ugr` (simplified to the stops that matter).
 - `cargo run -p render --example render_presets -- --palettes` renders a
   contact sheet of every palette.
+
+## Stills and scene files (M4) notes
+
+- `render::render_still`: 256×256 tiles, one sample per GPU submission (TDR
+  safe), R2 sub-pixel jitter, float32 accumulation. 4K at 16 spp renders in
+  ~3 s on the Iris Xe.
+- `export` crate: PNG 8-bit (dithered) / 16-bit, OpenEXR (linear, exposure
+  applied). PNGs embed the scene as JSON (iTXt `fractals-scene`), so
+  File → Open scene accepts exported PNGs.
+- Scene files are JSON wrapped with a format name and version; floats
+  round-trip exactly.
+- CLI: `cargo run --release -p export --example export_still -- out.png 3840 2160 16 [--scene s.json]`.
 
 ## Flame fractals (M8) notes
 

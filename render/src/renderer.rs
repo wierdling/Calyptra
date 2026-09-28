@@ -37,12 +37,36 @@ impl HdrTarget {
     }
 }
 
+/// Which part of which image a render covers.
+///
+/// A render target may be one tile of a larger image; each target pixel
+/// `(x, y)` samples the full image at `(x, y) + pixel_offset`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Region {
+    pub full_width: u32,
+    pub full_height: u32,
+    /// Tile origin plus the sample position within the pixel (0.5 = center).
+    pub pixel_offset: [f32; 2],
+}
+
+impl Region {
+    /// The whole image, sampled at pixel centers.
+    pub fn full(width: u32, height: u32) -> Self {
+        Self {
+            full_width: width,
+            full_height: height,
+            pixel_offset: [0.5, 0.5],
+        }
+    }
+}
+
 /// Per-frame information handed to a renderer.
 #[derive(Clone, Copy, Debug)]
 pub struct FrameInput<'a> {
     pub scene: &'a scene::Scene,
     /// Monotonic frame counter; useful for progressive sampling and noise seeds.
     pub frame: u32,
+    pub region: Region,
 }
 
 /// Geometry measurements taken at the camera, read back from the GPU a

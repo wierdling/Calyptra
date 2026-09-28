@@ -11,12 +11,16 @@ mod hot_reload;
 mod raymarch;
 mod readback;
 mod renderer;
+mod still;
 mod viewport;
 
+pub use display::display_transform;
 pub use gpu_timer::GpuTimings;
 pub use raymarch::RaymarchRenderer;
-pub use renderer::{FrameInput, HDR_FORMAT, HdrTarget, Probe, Renderer};
-pub use viewport::{DISPLAY_FORMAT, DisplaySettings, ToneMap, Viewport};
+pub use renderer::{FrameInput, HDR_FORMAT, HdrTarget, Probe, Region, Renderer};
+pub use scene::{DisplaySettings, ToneMap};
+pub use still::{HdrImage, StillSettings, render_still, sample_offset};
+pub use viewport::{DISPLAY_FORMAT, Viewport};
 
 /// Vertex shader shared by all full-screen passes. Prepended to fragment
 /// shader sources by [`fullscreen_shader`].

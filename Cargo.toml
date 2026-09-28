@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["app", "color", "formulas", "render", "scene"]
+members = ["app", "color", "export", "formulas", "render", "scene"]
 
 [workspace.package]
 edition = "2024"

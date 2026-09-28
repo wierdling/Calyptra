@@ -1,11 +1,12 @@
 use std::time::{Duration, Instant};
 
 use formulas::Library;
-use render::{DisplaySettings, RaymarchRenderer, Renderer, ToneMap, Viewport};
+use render::{RaymarchRenderer, Renderer, ToneMap, Viewport};
 use scene::{DeMode, Scene};
 
 use crate::camera_control::{CameraController, CameraMode, NavInput};
 use crate::color_ui::{GradientEditor, coloring_ui};
+use crate::export_ui::{ExportContext, ExportDialog};
 use crate::fractal_ui::fractal_editor;
 
 const SCENE_KEY: &str = "scene";
@@ -27,7 +28,6 @@ struct ShaderKey {
 #[derive(PartialEq)]
 struct RenderedState {
     scene: Scene,
-    display: DisplaySettings,
     size: (u32, u32),
 }
 
@@ -44,8 +44,10 @@ pub struct FractalApp {
     gradient_editor: GradientEditor,
     /// Fit the gradient using the first probe from this frame onwards.
     fit_from_frame: Option<u32>,
+    export_dialog: ExportDialog,
+    /// Result of the last scene open/save, shown in the menu bar.
+    file_message: Option<Result<String, String>>,
     texture_id: egui::TextureId,
-    display: DisplaySettings,
     /// Render resolution relative to the physical pixel size of the view.
     resolution_scale: f32,
     /// Resolution scale used while the camera is moving.
@@ -85,11 +87,11 @@ impl FractalApp {
             formula_error: None,
             last_reload_check: Instant::now(),
             gradient_editor: GradientEditor::default(),
-            // Fit on startup too: the restored scene may have a new range.
-            fit_from_frame: Some(0),
+            fit_from_frame: None,
+            export_dialog: ExportDialog::default(),
+            file_message: None,
             viewport,
             texture_id,
-            display: DisplaySettings::default(),
             resolution_scale: 1.0,
             interactive_scale: 0.5,
             last_interaction: Instant::now(),
@@ -175,6 +177,70 @@ impl FractalApp {
                     self.camera_control.orbit_target = glam::DVec3::ZERO;
                 }
             });
+    }
+
+    fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("File", |ui| {
+                if ui.button("Open scene…").clicked() {
+                    self.open_scene();
+                }
+                if ui.button("Save scene as…").clicked() {
+                    self.save_scene();
+                }
+                ui.separator();
+                let label = if self.export_dialog.is_running() {
+                    "Export image… (rendering)"
+                } else {
+                    "Export image…"
+                };
+                if ui.button(label).clicked() {
+                    self.export_dialog.open = true;
+                }
+            });
+            match &self.file_message {
+                Some(Ok(message)) => {
+                    ui.weak(message);
+                }
+                Some(Err(message)) => {
+                    ui.colored_label(ui.visuals().error_fg_color, message);
+                }
+                None => {}
+            }
+        });
+    }
+
+    fn open_scene(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Open scene")
+            .add_filter("Scene or exported image", &["json", "png"])
+            .pick_file()
+        else {
+            return;
+        };
+        self.file_message = Some(match export::load_scene(&path) {
+            Ok(scene) => {
+                self.scene = scene;
+                self.camera_control.orbit_target = glam::DVec3::ZERO;
+                Ok(format!("Opened {}", path.display()))
+            }
+            Err(error) => Err(format!("{}: {error}", path.display())),
+        });
+    }
+
+    fn save_scene(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Save scene")
+            .set_file_name("scene.json")
+            .add_filter("Scene", &["json"])
+            .save_file()
+        else {
+            return;
+        };
+        self.file_message = Some(match export::save_scene(&path, &self.scene) {
+            Ok(()) => Ok(format!("Saved {}", path.display())),
+            Err(error) => Err(format!("{}: {error}", path.display())),
+        });
     }
 
     /// Fits the gradient to the view once a fresh probe arrives.
@@ -350,17 +416,18 @@ impl FractalApp {
             .default_open(false)
             .show(ui, |ui| {
                 ui.add(
-                    egui::Slider::new(&mut self.display.exposure_ev, -5.0..=5.0)
+                    egui::Slider::new(&mut self.scene.display.exposure_ev, -5.0..=5.0)
                         .text("Exposure (EV)")
                         .step_by(0.1),
                 );
                 egui::ComboBox::from_label("Tone map")
-                    .selected_text(format!("{:?}", self.display.tone_map))
+                    .selected_text(format!("{:?}", self.scene.display.tone_map))
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.display.tone_map, ToneMap::Aces, "Aces");
-                        ui.selectable_value(&mut self.display.tone_map, ToneMap::Clamp, "Clamp");
+                        let tone_map = &mut self.scene.display.tone_map;
+                        ui.selectable_value(tone_map, ToneMap::Aces, "Aces");
+                        ui.selectable_value(tone_map, ToneMap::Clamp, "Clamp");
                     });
-                ui.checkbox(&mut self.display.dither, "Dither");
+                ui.checkbox(&mut self.scene.display.dither, "Dither");
             });
     }
 
@@ -422,7 +489,6 @@ impl FractalApp {
 
         let state = RenderedState {
             scene: self.scene.clone(),
-            display: self.display,
             size,
         };
         if self.rendered.as_ref() != Some(&state) {
@@ -434,13 +500,8 @@ impl FractalApp {
                     self.texture_id,
                 );
             }
-            self.viewport.render(
-                &rs.device,
-                &rs.queue,
-                &mut self.renderer,
-                &self.scene,
-                &self.display,
-            );
+            self.viewport
+                .render(&rs.device, &rs.queue, &mut self.renderer, &self.scene);
             self.rendered = Some(state);
         }
 
@@ -465,6 +526,8 @@ impl FractalApp {
 
 impl eframe::App for FractalApp {
     fn ui(&mut self, root: &mut egui::Ui, frame: &mut eframe::Frame) {
+        egui::Panel::top("menu").show(root, |ui| self.menu_bar(ui));
+
         egui::Panel::left("controls")
             .default_size(300.0)
             .show(root, |ui| self.side_panel(ui));
@@ -472,6 +535,19 @@ impl eframe::App for FractalApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(root, |ui| self.viewport_ui(ui, frame));
+
+        if let Some(rs) = frame.wgpu_render_state() {
+            let export = ExportContext {
+                device: &rs.device,
+                queue: &rs.queue,
+                scene: &self.scene,
+                de_source: formulas::compose(&self.scene.fractal, &self.library)
+                    .map_err(|e| e.to_string()),
+                viewport_size: self.viewport.size(),
+                viewport_gpu_ms: self.viewport.gpu_timings().map(|t| t.render_ms),
+            };
+            self.export_dialog.ui(root.ctx(), export);
+        }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

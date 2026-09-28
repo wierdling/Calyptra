@@ -16,4 +16,5 @@ glam.workspace = true
 scene = { path = "../scene" }
 color = { path = "../color" }
 formulas = { path = "../formulas" }
+export = { path = "../export" }
 rfd = "0.17"

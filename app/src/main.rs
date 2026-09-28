@@ -3,6 +3,7 @@
 mod app;
 mod camera_control;
 mod color_ui;
+mod export_ui;
 mod fractal_ui;
 
 use std::sync::Arc;
