@@ -5,6 +5,7 @@ use render::{DisplaySettings, RaymarchRenderer, Renderer, ToneMap, Viewport};
 use scene::{DeMode, Scene};
 
 use crate::camera_control::{CameraController, CameraMode, NavInput};
+use crate::color_ui::{GradientEditor, coloring_ui};
 use crate::fractal_ui::fractal_editor;
 
 const SCENE_KEY: &str = "scene";
@@ -40,6 +41,9 @@ pub struct FractalApp {
     /// Formula library or composition problem, shown in the panel.
     formula_error: Option<String>,
     last_reload_check: Instant,
+    gradient_editor: GradientEditor,
+    /// Fit the gradient using the first probe from this frame onwards.
+    fit_from_frame: Option<u32>,
     texture_id: egui::TextureId,
     display: DisplaySettings,
     /// Render resolution relative to the physical pixel size of the view.
@@ -80,6 +84,9 @@ impl FractalApp {
             shader_key: None,
             formula_error: None,
             last_reload_check: Instant::now(),
+            gradient_editor: GradientEditor::default(),
+            // Fit on startup too: the restored scene may have a new range.
+            fit_from_frame: Some(0),
             viewport,
             texture_id,
             display: DisplaySettings::default(),
@@ -99,7 +106,8 @@ impl FractalApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             self.camera_section(ui);
             self.fractal_section(ui);
-            self.shading_section(ui);
+            self.color_section(ui);
+            self.lighting_section(ui);
             self.quality_section(ui);
             self.display_section(ui);
             self.performance_section(ui);
@@ -163,9 +171,30 @@ impl FractalApp {
                 }
                 if let Some(preset) = fractal_editor(ui, &mut self.scene.fractal, &self.library) {
                     preset.apply(&mut self.scene);
+                    self.request_fit();
                     self.camera_control.orbit_target = glam::DVec3::ZERO;
                 }
             });
+    }
+
+    /// Fits the gradient to the view once a fresh probe arrives.
+    fn request_fit(&mut self) {
+        self.fit_from_frame = Some(self.viewport.next_frame());
+        // Guarantees a new frame (and probe) even if nothing else changed.
+        self.rendered = None;
+    }
+
+    fn apply_pending_fit(&mut self) {
+        let (Some(from), Some(probe)) = (self.fit_from_frame, self.renderer.probe()) else {
+            return;
+        };
+        if probe.frame < from {
+            return;
+        }
+        if let Some((lo, hi)) = probe.color_range {
+            self.scene.coloring.fit_to_range(lo, hi);
+        }
+        self.fit_from_frame = None;
     }
 
     /// Recompiles the shader if the fractal's shape or the library changed.
@@ -215,37 +244,75 @@ impl FractalApp {
         }
     }
 
-    fn shading_section(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("Shading")
-            .default_open(true)
+    fn lighting_section(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Lighting")
+            .default_open(false)
             .show(ui, |ui| {
                 let s = &mut self.scene.shading;
+                ui.strong("Key light");
                 ui.add(
-                    egui::Slider::new(&mut s.light_azimuth_degrees, -180.0..=180.0)
-                        .text("Light azimuth"),
+                    egui::Slider::new(&mut s.light_azimuth_degrees, -180.0..=180.0).text("Azimuth"),
                 );
                 ui.add(
                     egui::Slider::new(&mut s.light_elevation_degrees, -90.0..=90.0)
-                        .text("Light elevation"),
+                        .text("Elevation"),
                 );
-                ui.add(
-                    egui::Slider::new(&mut s.light_intensity, 0.0..=10.0).text("Light intensity"),
+                ui.horizontal(|ui| {
+                    ui.color_edit_button_rgb(&mut s.light_color);
+                    ui.add(egui::Slider::new(&mut s.light_intensity, 0.0..=10.0).text("Intensity"));
+                });
+                ui.checkbox(&mut s.shadows, "Soft shadows");
+                ui.add_enabled(
+                    s.shadows,
+                    egui::Slider::new(&mut s.shadow_sharpness, 1.0..=128.0)
+                        .logarithmic(true)
+                        .text("Shadow sharpness"),
                 );
-                ui.add(egui::Slider::new(&mut s.ambient, 0.0..=2.0).text("Ambient"));
-                ui.add(egui::Slider::new(&mut s.specular, 0.0..=4.0).text("Specular"));
+
+                ui.strong("Surface");
+                ui.add(egui::Slider::new(&mut s.ambient, 0.0..=3.0).text("Ambient"));
                 ui.add(egui::Slider::new(&mut s.ao_strength, 0.0..=4.0).text("Ambient occlusion"));
+                ui.add(egui::Slider::new(&mut s.specular, 0.0..=4.0).text("Specular"));
+                ui.add(
+                    egui::Slider::new(&mut s.shininess, 1.0..=512.0)
+                        .logarithmic(true)
+                        .text("Shininess"),
+                );
+
+                ui.strong("Atmosphere");
+                ui.horizontal(|ui| {
+                    ui.color_edit_button_rgb(&mut s.background_top);
+                    ui.color_edit_button_rgb(&mut s.background_bottom);
+                    ui.label("Background (top / bottom)");
+                });
                 ui.add(
                     egui::Slider::new(&mut s.fog_density, 0.0..=1.0)
                         .logarithmic(true)
                         .text("Fog"),
                 );
-                ui.add(egui::Slider::new(&mut s.palette_offset, 0.0..=1.0).text("Palette offset"));
+                ui.horizontal(|ui| {
+                    ui.color_edit_button_rgb(&mut s.glow_color);
+                    ui.add(egui::Slider::new(&mut s.glow_intensity, 0.0..=4.0).text("Glow"));
+                });
                 ui.add(
-                    egui::Slider::new(&mut s.palette_frequency, 0.1..=8.0)
-                        .text("Palette frequency"),
+                    egui::Slider::new(&mut s.glow_radius_degrees, 0.1..=20.0)
+                        .logarithmic(true)
+                        .text("Glow radius (°)"),
                 );
-                if ui.button("Reset shading").clicked() {
+                if ui.button("Reset lighting").clicked() {
                     *s = Default::default();
+                }
+            });
+    }
+
+    fn color_section(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Color")
+            .default_open(true)
+            .show(ui, |ui| {
+                let source = self.scene.coloring.source;
+                let fit = coloring_ui(ui, &mut self.scene.coloring, &mut self.gradient_editor);
+                if fit || self.scene.coloring.source != source {
+                    self.request_fit();
                 }
             });
     }
@@ -336,6 +403,7 @@ impl FractalApp {
             return;
         };
         self.viewport.poll(&rs.device, &mut self.renderer);
+        self.apply_pending_fit();
         self.hot_reload(&rs.device);
         self.update_shader(&rs.device);
 
@@ -385,7 +453,7 @@ impl FractalApp {
 
         if navigating {
             ui.ctx().request_repaint();
-        } else if !settled {
+        } else if !settled || self.fit_from_frame.is_some() {
             // Wake up to render the full-resolution frame.
             ui.ctx().request_repaint_after(SETTLE_TIME);
         } else {

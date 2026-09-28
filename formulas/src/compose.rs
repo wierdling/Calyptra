@@ -24,8 +24,11 @@ impl std::fmt::Display for ComposeError {
 
 impl std::error::Error for ComposeError {}
 
-/// Generates WGSL defining `fn de(p: vec3<f32>) -> vec2<f32>` (distance,
-/// orbit trap) for `fractal`.
+/// Generates WGSL defining, for `fractal`:
+///
+/// - `fn de(p: vec3<f32>) -> f32`: the distance estimate;
+/// - `fn de_trap(p: vec3<f32>) -> vec4<f32>`: point trap, plane trap,
+///   smoothed iteration count, distance estimate.
 ///
 /// The output depends only on the fractal's *shape* (formulas, order,
 /// repeats, DE mode) — parameter values, iterations, bailout and the Julia
@@ -111,16 +114,9 @@ pub fn compose(fractal: &Fractal, library: &Library) -> Result<String, ComposeEr
     }
     // A lone formula needs no dispatch.
     let step = if fractal.slots.len() == 1 {
-        format!(
-            "        {single_call}
-"
-        )
+        format!("        {single_call}\n")
     } else {
-        format!(
-            "        switch i % {cycle}u {{
-{cases}        }}
-"
-        )
+        format!("        switch i % {cycle}u {{\n{cases}        }}\n")
     };
 
     let de_mode = match fractal.de_mode {
@@ -133,23 +129,48 @@ pub fn compose(fractal: &Fractal, library: &Library) -> Result<String, ComposeEr
         DeMode::Box => "(max(max(abs(z.x), abs(z.y)), abs(z.z)) - 1.0) / abs(dr)",
     };
 
+    // The same iteration twice: `de` is the hot path used for marching,
+    // normals, AO and shadows; `de_trap` runs once per pixel for coloring
+    // and also records orbit statistics.
     let _ = write!(
         out,
         "// ---- distance estimator ----
-fn de(p: vec3<f32>) -> vec2<f32> {{
+fn de(p: vec3<f32>) -> f32 {{
     var z = p;
     var dr = 1.0;
-    var trap = 1.0e10;
     let c = select(p, u.julia_c.xyz, u.julia_c.w > 0.5);
     var r = length(z);
     for (var i = 0u; i < u.iterations; i++) {{
-{step}        trap = min(trap, dot(z, z));
-        r = length(z);
+{step}        r = length(z);
         if r > u.bailout {{
             break;
         }}
     }}
-    return vec2<f32>({distance}, trap);
+    return {distance};
+}}
+
+// x = min |z|^2 (point trap), y = min distance to the axis planes,
+// z = smoothed escape iteration, w = distance estimate.
+fn de_trap(p: vec3<f32>) -> vec4<f32> {{
+    var z = p;
+    var dr = 1.0;
+    let c = select(p, u.julia_c.xyz, u.julia_c.w > 0.5);
+    var r = length(z);
+    var point_trap = 1.0e10;
+    var plane_trap = 1.0e10;
+    var smooth_iter = f32(u.iterations);
+    for (var i = 0u; i < u.iterations; i++) {{
+{step}        point_trap = min(point_trap, dot(z, z));
+        plane_trap = min(plane_trap, min(abs(z.x), min(abs(z.y), abs(z.z))));
+        r = length(z);
+        if r > u.bailout {{
+            // Fractional part: how far past the bailout the orbit landed.
+            let overshoot = log(r) / log(max(u.bailout, 1.0001));
+            smooth_iter = f32(i) + 1.0 - clamp(log2(overshoot), 0.0, 1.0);
+            break;
+        }}
+    }}
+    return vec4<f32>(point_trap, plane_trap, smooth_iter, {distance});
 }}
 "
     );
@@ -166,10 +187,11 @@ mod tests {
         let library = Library::builtin().unwrap();
         let src = compose(&Fractal::default(), &library).unwrap();
         assert!(src.contains("struct mandelbulb_Params {\n    power: f32,"));
-        assert!(src.contains(
-            "        mandelbulb(&z, &dr, c, mandelbulb_Params(u.slot_params[0].x));
-"
-        ));
+        assert!(
+            src.contains(
+                "        mandelbulb(&z, &dr, c, mandelbulb_Params(u.slot_params[0].x));\n"
+            )
+        );
         assert!(!src.contains("switch"));
         assert!(src.contains("0.5 * log(r) * r / dr"));
     }

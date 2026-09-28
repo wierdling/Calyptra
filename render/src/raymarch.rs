@@ -1,4 +1,4 @@
-use scene::Fractal;
+use scene::{ColorSource, Fractal, Wrap};
 
 use crate::hot_reload::WatchedFile;
 use crate::readback::Readback;
@@ -18,6 +18,10 @@ struct Uniforms {
     cam_up: [f32; 4],
     cam_forward: [f32; 4],
     light_dir: [f32; 4],
+    light_color: [f32; 4],
+    glow_color: [f32; 4],
+    background_top: [f32; 4],
+    background_bottom: [f32; 4],
     julia_c: [f32; 4],
     resolution: [f32; 2],
     bailout: f32,
@@ -28,12 +32,16 @@ struct Uniforms {
     max_distance: f32,
     ambient: f32,
     specular: f32,
+    shininess: f32,
     ao_strength: f32,
+    shadow_sharpness: f32,
     fog_density: f32,
-    palette_offset: f32,
-    palette_frequency: f32,
-    _pad0: f32,
-    _pad1: f32,
+    glow_radius: f32,
+    color_offset: f32,
+    color_frequency: f32,
+    color_source: u32,
+    color_wrap: u32,
+    _pad: f32,
     slot_params: [[f32; 4]; PARAM_VEC4S],
 }
 
@@ -41,13 +49,15 @@ impl Uniforms {
     fn new(scene: &scene::Scene, width: u32, height: u32) -> Self {
         let camera = &scene.camera;
         let fractal = &scene.fractal;
+        let shading = &scene.shading;
+        let coloring = &scene.coloring;
         let tan_half_fov = (camera.fov_y_degrees.to_radians() * 0.5).tan() as f32;
         let aspect = width as f32 / height as f32;
         let pixel_angle = 2.0 * tan_half_fov / height as f32;
         let right = camera.right().as_vec3() * tan_half_fov * aspect;
         let up = camera.up().as_vec3() * tan_half_fov;
         let forward = camera.forward().as_vec3();
-        let light = scene.shading.light_direction();
+        let rgb = |c: [f32; 3], w: f32| [c[0], c[1], c[2], w];
 
         let mut slot_params = [[0.0; 4]; PARAM_VEC4S];
         for (i, slot) in fractal.slots.iter().take(Fractal::MAX_SLOTS).enumerate() {
@@ -61,7 +71,14 @@ impl Uniforms {
             cam_right: right.extend(0.0).into(),
             cam_up: up.extend(0.0).into(),
             cam_forward: forward.extend(pixel_angle).into(),
-            light_dir: light.extend(scene.shading.light_intensity).into(),
+            light_dir: shading
+                .light_direction()
+                .extend(shading.light_intensity)
+                .into(),
+            light_color: rgb(shading.light_color, 0.0),
+            glow_color: rgb(shading.glow_color, shading.glow_intensity),
+            background_top: rgb(shading.background_top, 0.0),
+            background_bottom: rgb(shading.background_bottom, 0.0),
             julia_c: fractal
                 .julia_c
                 .extend(if fractal.julia { 1.0 } else { 0.0 })
@@ -73,20 +90,62 @@ impl Uniforms {
             detail: scene.quality.detail,
             step_factor: scene.quality.step_factor,
             max_distance: scene.quality.max_distance,
-            ambient: scene.shading.ambient,
-            specular: scene.shading.specular,
-            ao_strength: scene.shading.ao_strength,
-            fog_density: scene.shading.fog_density,
-            palette_offset: scene.shading.palette_offset,
-            palette_frequency: scene.shading.palette_frequency,
-            _pad0: 0.0,
-            _pad1: 0.0,
+            ambient: shading.ambient,
+            specular: shading.specular,
+            shininess: shading.shininess,
+            ao_strength: shading.ao_strength,
+            shadow_sharpness: if shading.shadows {
+                shading.shadow_sharpness.max(0.1)
+            } else {
+                0.0
+            },
+            fog_density: shading.fog_density,
+            glow_radius: shading.glow_radius_degrees.to_radians(),
+            color_offset: coloring.offset,
+            color_frequency: coloring.frequency,
+            color_source: match coloring.source {
+                ColorSource::OrbitTrap => 0,
+                ColorSource::PlaneTrap => 1,
+                ColorSource::Iterations => 2,
+                ColorSource::Height => 3,
+                ColorSource::Normal => 4,
+            },
+            color_wrap: match coloring.wrap {
+                Wrap::Repeat => 0,
+                Wrap::Mirror => 1,
+                Wrap::Clamp => 2,
+            },
+            _pad: 0.0,
             slot_params,
         }
     }
 }
 
-const PROBE_SIZE: u64 = 2 * size_of::<f32>() as u64;
+/// Resolution of the gradient lookup texture.
+const GRADIENT_SIZE: u32 = 1024;
+
+/// Must match `probe_out` in `raymarch.wgsl`.
+const PROBE_GRID: usize = 16;
+const PROBE_LEN: usize = 2 + PROBE_GRID * PROBE_GRID;
+const PROBE_SIZE: u64 = (PROBE_LEN * size_of::<f32>()) as u64;
+const PROBE_MISS: f32 = 1.0e30;
+
+/// Robust range of the sampled color values, ignoring outliers.
+fn color_range(samples: &[f32]) -> Option<(f32, f32)> {
+    let mut hits: Vec<f32> = samples
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite() && *v < PROBE_MISS)
+        .collect();
+    // Too few hits (fractal barely in view) would give a meaningless fit.
+    if hits.len() < 8 {
+        return None;
+    }
+    hits.sort_by(f32::total_cmp);
+    let at = |q: f32| hits[((hits.len() - 1) as f32 * q).round() as usize];
+    let (lo, hi) = (at(0.02), at(0.98));
+    (hi > lo).then_some((lo, hi))
+}
 
 struct Pipelines {
     render: wgpu::RenderPipeline,
@@ -107,9 +166,14 @@ pub struct RaymarchRenderer {
     probe_layout: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
+    gradient_texture: wgpu::Texture,
+    /// Gradient currently in `gradient_texture`.
+    uploaded_gradient: Option<color::Gradient>,
     probe_buffer: wgpu::Buffer,
     probe_bind_group: wgpu::BindGroup,
     probe_readback: Readback,
+    /// Frame whose probe is in `probe_readback`.
+    probe_frame: u32,
     probe: Option<Probe>,
 }
 
@@ -117,16 +181,34 @@ impl RaymarchRenderer {
     pub fn new(device: &wgpu::Device) -> Self {
         let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("raymarch uniforms"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
         let probe_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("raymarch probe"),
@@ -147,13 +229,46 @@ impl RaymarchRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // sRGB storage: the sampler returns linear color, filtered in linear.
+        let gradient_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gradient"),
+            size: wgpu::Extent3d {
+                width: GRADIENT_SIZE,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let gradient_view = gradient_texture.create_view(&Default::default());
+        // Clamp to edge: wrapping is done in the shader (repeat / mirror / clamp).
+        let gradient_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("gradient"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("raymarch uniforms"),
             layout: &uniform_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&gradient_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&gradient_sampler),
+                },
+            ],
         });
         let probe_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("raymarch probe"),
@@ -182,9 +297,12 @@ impl RaymarchRenderer {
             probe_layout,
             uniform_buffer,
             uniform_bind_group,
+            gradient_texture,
+            uploaded_gradient: None,
             probe_buffer,
             probe_bind_group,
             probe_readback: Readback::new(device, "raymarch probe readback", PROBE_SIZE),
+            probe_frame: 0,
             probe: None,
         }
     }
@@ -204,6 +322,28 @@ impl RaymarchRenderer {
         log::info!("raymarch template changed, recompiling");
         self.rebuild(device);
         true
+    }
+
+    fn upload_gradient(&mut self, queue: &wgpu::Queue, gradient: &color::Gradient) {
+        if self.uploaded_gradient.as_ref() == Some(gradient) {
+            return;
+        }
+        let texels: Vec<u8> = gradient
+            .bake_srgb8(GRADIENT_SIZE as usize)
+            .into_iter()
+            .flat_map(|[r, g, b]| [r, g, b, 255])
+            .collect();
+        queue.write_texture(
+            self.gradient_texture.as_image_copy(),
+            &texels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(GRADIENT_SIZE * 4),
+                rows_per_image: Some(1),
+            },
+            self.gradient_texture.size(),
+        );
+        self.uploaded_gradient = Some(gradient.clone());
     }
 
     /// Compile error from the most recent rebuild, if any.
@@ -268,6 +408,7 @@ impl Renderer for RaymarchRenderer {
     ) {
         let uniforms = Uniforms::new(input.scene, target.width, target.height);
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        self.upload_gradient(queue, &input.scene.coloring.gradient);
 
         if let Some(pipelines) = &self.pipelines
             && self.probe_readback.is_idle()
@@ -282,6 +423,7 @@ impl Renderer for RaymarchRenderer {
             pass.dispatch_workgroups(1, 1, 1);
             drop(pass);
             self.probe_readback.copy_from(encoder, &self.probe_buffer);
+            self.probe_frame = input.frame;
         }
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -312,6 +454,8 @@ impl Renderer for RaymarchRenderer {
             self.probe = Some(Probe {
                 distance: values[0],
                 center_hit: (values[1] >= 0.0).then_some(values[1]),
+                color_range: color_range(&values[2..]),
+                frame: self.probe_frame,
             });
         }
     }

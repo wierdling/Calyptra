@@ -53,6 +53,11 @@ pub struct Probe {
     pub distance: f32,
     /// Distance along the view direction to the surface, if the center ray hits.
     pub center_hit: Option<f32>,
+    /// 2nd–98th percentile of the raw coloring value over the visible
+    /// surface, if enough of the view is covered.
+    pub color_range: Option<(f32, f32)>,
+    /// [`FrameInput::frame`] of the render this probe came from.
+    pub frame: u32,
 }
 
 /// A rendering back-end (raymarch preview, path tracer, flame, ...).

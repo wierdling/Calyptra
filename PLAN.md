@@ -85,12 +85,26 @@ every preset headlessly to `renders/presets/`.
 | **M0** ✅ | Workspace, egui + wgpu window, offscreen full-screen shader, GPU timing | Window with a live shader |
 | **M1** ✅ | Mandelbulb raymarcher, orbit + fly camera, basic shading, parameter panel | Fly around a Mandelbulb |
 | **M2** ✅ | Formula library, hybrids, shader composer, hot reload | Mix Mandelbox + Mandelbulb |
-| **M3** | Lighting & color: AO, soft shadows, fog, glow, orbit-trap coloring, OKLab gradient editor, palette presets | Genuinely pretty pictures |
+| **M3** ✅ | Lighting & color: AO, soft shadows, fog, glow, orbit-trap coloring, OKLab gradient editor, palette presets | Genuinely pretty pictures |
 | **M4** | Hi-res stills: tiled rendering, supersampling, PNG16/EXR, scene save/load | Print-quality images |
 | **M5** | Path tracer: progressive, DOF, environment light, tone mapping, OIDN denoise | Photoreal renders |
 | **M6** | Animation: timeline, keyframes, Catmull-Rom camera splines, easing, preview, resumable render queue, ffmpeg | Movies |
 | **M7** | Custom formulas: user WGSL snippets, hot reload, in-UI error reporting | Your own formulas |
 | **M8** | Flame fractals: chaos game compute shader, variations, log-density + density estimation | Flames |
+
+## Coloring (M3) notes
+
+- Gradients (`color` crate) are authored in sRGB and interpolated in OKLab;
+  baked to a 1024-texel sRGB lookup texture.
+- Color sources: point orbit trap, plane orbit trap, smoothed iterations,
+  height, surface normal; offset / frequency / wrap (repeat, mirror, clamp).
+- **Fit to view:** the GPU probe samples the coloring value on a 16×16 ray
+  grid; the 2nd–98th percentile range is mapped onto the gradient.
+  Automatic on color-source change, preset load and startup.
+- 15 built-in palettes; import of Fractint `.map`, GIMP `.ggr`, Ultra Fractal
+  `.ugr` (simplified to the stops that matter).
+- `cargo run -p render --example render_presets -- --palettes` renders a
+  contact sheet of every palette.
 
 ## Flame fractals (M8) notes
 

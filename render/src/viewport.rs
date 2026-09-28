@@ -73,6 +73,11 @@ impl Viewport {
         true
     }
 
+    /// Frame number the next [`Self::render`] will use (see [`FrameInput::frame`]).
+    pub fn next_frame(&self) -> u32 {
+        self.frame
+    }
+
     pub fn display_view(&self) -> &wgpu::TextureView {
         &self.display_view
     }

@@ -241,7 +241,7 @@ mod tests {
             let start = camera.position;
             let probe = Probe {
                 distance: surface,
-                center_hit: None,
+                ..Default::default()
             };
             controller.update(&mut camera, &input, Some(probe));
             camera.position.distance(start)

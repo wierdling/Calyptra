@@ -6,12 +6,16 @@
 use glam::{DMat3, DQuat, DVec3};
 use serde::{Deserialize, Serialize};
 
+/// Every struct uses `#[serde(default)]`: scenes saved by older versions
+/// load with defaults for settings added since.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Scene {
     pub camera: Camera,
     pub fractal: Fractal,
     pub quality: Quality,
     pub shading: Shading,
+    pub coloring: Coloring,
 }
 
 /// Right-handed, Y-up. The camera looks down its local -Z axis.
@@ -19,6 +23,7 @@ pub struct Scene {
 /// Position is `f64` on the CPU so small moves deep inside the fractal
 /// accumulate without drift.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Camera {
     pub position: DVec3,
     pub orientation: DQuat,
@@ -66,6 +71,7 @@ impl Camera {
 /// A (possibly hybrid) iterated fractal: formula slots applied in order,
 /// cycling until `iterations` is reached or the point escapes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Fractal {
     pub slots: Vec<FormulaSlot>,
     pub iterations: u32,
@@ -135,6 +141,7 @@ pub enum DeMode {
 
 /// Raymarching accuracy / speed trade-offs.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Quality {
     pub max_steps: u32,
     /// Surface hit threshold in pixels: 1.0 stops a ray when it is within
@@ -156,19 +163,31 @@ impl Default for Quality {
     }
 }
 
+/// Lighting and atmosphere. Colors are linear RGB.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Shading {
     pub light_azimuth_degrees: f32,
     pub light_elevation_degrees: f32,
     pub light_intensity: f32,
+    pub light_color: [f32; 3],
+    /// Sky/ground ambient light, tinted by the background colors.
     pub ambient: f32,
     pub specular: f32,
+    /// Specular exponent: higher = smaller, sharper highlights.
+    pub shininess: f32,
     pub ao_strength: f32,
+    pub shadows: bool,
+    /// Penumbra sharpness: low = soft, high = hard-edged.
+    pub shadow_sharpness: f32,
     pub fog_density: f32,
-    /// Shifts the orbit-trap palette lookup.
-    pub palette_offset: f32,
-    /// Scales the orbit-trap palette lookup.
-    pub palette_frequency: f32,
+    /// Halo around the fractal's silhouette.
+    pub glow_intensity: f32,
+    /// Angular size of the halo, in degrees.
+    pub glow_radius_degrees: f32,
+    pub glow_color: [f32; 3],
+    pub background_top: [f32; 3],
+    pub background_bottom: [f32; 3],
 }
 
 impl Default for Shading {
@@ -177,12 +196,19 @@ impl Default for Shading {
             light_azimuth_degrees: 35.0,
             light_elevation_degrees: 45.0,
             light_intensity: 2.5,
-            ambient: 0.25,
+            light_color: [1.0, 0.95, 0.88],
+            ambient: 0.6,
             specular: 0.6,
+            shininess: 48.0,
             ao_strength: 1.0,
+            shadows: true,
+            shadow_sharpness: 16.0,
             fog_density: 0.02,
-            palette_offset: 0.0,
-            palette_frequency: 1.0,
+            glow_intensity: 0.0,
+            glow_radius_degrees: 2.0,
+            glow_color: [0.4, 0.6, 1.0],
+            background_top: [0.10, 0.12, 0.18],
+            background_bottom: [0.02, 0.02, 0.035],
         }
     }
 }
@@ -193,6 +219,84 @@ impl Shading {
         let az = self.light_azimuth_degrees.to_radians();
         let el = self.light_elevation_degrees.to_radians();
         glam::Vec3::new(el.cos() * az.sin(), el.sin(), el.cos() * az.cos())
+    }
+}
+
+/// What drives the surface color lookup.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ColorSource {
+    /// Closest approach of the orbit to the origin.
+    #[default]
+    OrbitTrap,
+    /// Closest approach of the orbit to the three axis planes.
+    PlaneTrap,
+    /// Smoothed escape iteration count.
+    Iterations,
+    /// World-space height.
+    Height,
+    /// Surface orientation (up-facing to down-facing).
+    Normal,
+}
+
+impl ColorSource {
+    pub const ALL: [Self; 5] = [
+        Self::OrbitTrap,
+        Self::PlaneTrap,
+        Self::Iterations,
+        Self::Height,
+        Self::Normal,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OrbitTrap => "Orbit trap (point)",
+            Self::PlaneTrap => "Orbit trap (planes)",
+            Self::Iterations => "Iterations",
+            Self::Height => "Height",
+            Self::Normal => "Surface normal",
+        }
+    }
+}
+
+/// How gradient positions outside [0, 1] are mapped back in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Wrap {
+    #[default]
+    Repeat,
+    Mirror,
+    Clamp,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Coloring {
+    pub gradient: color::Gradient,
+    pub source: ColorSource,
+    /// Gradient position = offset + frequency × source value.
+    pub offset: f32,
+    pub frequency: f32,
+    pub wrap: Wrap,
+}
+
+impl Coloring {
+    /// Sets offset and frequency so raw values `lo..hi` span the gradient.
+    pub fn fit_to_range(&mut self, lo: f32, hi: f32) {
+        if hi > lo {
+            self.frequency = 1.0 / (hi - lo);
+            self.offset = -lo * self.frequency;
+        }
+    }
+}
+
+impl Default for Coloring {
+    fn default() -> Self {
+        Self {
+            gradient: color::Gradient::default(),
+            source: ColorSource::OrbitTrap,
+            offset: 0.0,
+            frequency: 1.0,
+            wrap: Wrap::Repeat,
+        }
     }
 }
 
@@ -213,5 +317,28 @@ mod tests {
     fn scene_round_trips_through_equality() {
         let scene = Scene::default();
         assert_eq!(scene.clone(), scene);
+    }
+
+    #[test]
+    fn fit_maps_range_onto_gradient() {
+        let mut coloring = Coloring::default();
+        coloring.fit_to_range(-3.0, 1.0);
+        let t = |v: f32| coloring.offset + coloring.frequency * v;
+        assert!(t(-3.0).abs() < 1e-6 && (t(1.0) - 1.0).abs() < 1e-6);
+        // A degenerate range leaves the mapping alone.
+        let before = coloring.clone();
+        coloring.fit_to_range(2.0, 2.0);
+        assert_eq!(coloring, before);
+    }
+
+    #[test]
+    fn older_scenes_load_with_defaults() {
+        // A scene saved before `coloring` and newer shading fields existed.
+        let old = r#"{"shading": {"light_intensity": 4.0}, "quality": {"max_steps": 99}}"#;
+        let scene: Scene = serde_json::from_str(old).unwrap();
+        assert_eq!(scene.shading.light_intensity, 4.0);
+        assert_eq!(scene.shading.shininess, Shading::default().shininess);
+        assert_eq!(scene.quality.max_steps, 99);
+        assert_eq!(scene.coloring, Coloring::default());
     }
 }
