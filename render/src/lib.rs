@@ -5,6 +5,8 @@
 //! encoding, dithering) into an 8-bit texture that the UI shows. Export will
 //! reuse the same HDR target.
 
+mod accumulate;
+mod denoise;
 mod display;
 mod gpu_timer;
 mod hot_reload;
@@ -17,7 +19,7 @@ mod viewport;
 pub use display::display_transform;
 pub use gpu_timer::GpuTimings;
 pub use raymarch::RaymarchRenderer;
-pub use renderer::{FrameInput, HDR_FORMAT, HdrTarget, Probe, Region, Renderer};
+pub use renderer::{AUX_FORMAT, FrameInput, HDR_FORMAT, HdrTarget, Probe, Region, Renderer};
 pub use scene::{DisplaySettings, ToneMap};
 pub use still::{HdrImage, StillSettings, render_still, sample_offset};
 pub use viewport::{DISPLAY_FORMAT, Viewport};
@@ -54,14 +56,18 @@ pub(crate) fn fullscreen_shader(
 }
 
 /// Creates a pipeline that draws a single full-screen triangle with no
-/// vertex buffers.
+/// vertex buffers, using fragment entry point `entry` and one color target
+/// per format.
 pub(crate) fn fullscreen_pipeline(
     device: &wgpu::Device,
     label: &str,
     module: &wgpu::ShaderModule,
     bind_group_layout: &wgpu::BindGroupLayout,
-    target_format: wgpu::TextureFormat,
+    entry: &str,
+    target_formats: &[wgpu::TextureFormat],
 ) -> wgpu::RenderPipeline {
+    let targets: Vec<Option<wgpu::ColorTargetState>> =
+        target_formats.iter().map(|&f| Some(f.into())).collect();
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
         bind_group_layouts: &[Some(bind_group_layout)],
@@ -81,9 +87,9 @@ pub(crate) fn fullscreen_pipeline(
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
             module,
-            entry_point: Some("fs_main"),
+            entry_point: Some(entry),
             compilation_options: Default::default(),
-            targets: &[Some(target_format.into())],
+            targets: &targets,
         }),
         multiview_mask: None,
         cache: None,
@@ -94,11 +100,10 @@ pub(crate) fn fullscreen_pipeline(
 mod tests {
     use super::*;
 
+    const RAYMARCH_WGSL: &str = include_str!("shaders/raymarch.wgsl");
+
     fn validate(fragment_src: &str) {
-        let source = format!(
-            "{FULLSCREEN_WGSL}
-{fragment_src}"
-        );
+        let source = format!("{FULLSCREEN_WGSL}\n{fragment_src}");
         validate_wgsl(&source).unwrap_or_else(|e| panic!("{e}"));
     }
 
@@ -112,52 +117,29 @@ mod tests {
         let library = formulas::Library::builtin().unwrap();
         for preset in formulas::presets() {
             let de = formulas::compose(&preset.fractal, &library).unwrap();
-            let source = format!(
-                "{}
-{de}",
-                include_str!("shaders/raymarch.wgsl")
-            );
-            let source = format!(
-                "{FULLSCREEN_WGSL}
-{source}"
-            );
-            validate_wgsl(&source).unwrap_or_else(|e| {
-                panic!(
-                    "{}:
-{e}",
-                    preset.name
-                )
-            });
+            let source = format!("{FULLSCREEN_WGSL}\n{RAYMARCH_WGSL}\n{de}");
+            validate_wgsl(&source).unwrap_or_else(|e| panic!("{}:\n{e}", preset.name));
         }
     }
 
     #[test]
     fn every_formula_validates_alone_and_in_a_hybrid() {
         let library = formulas::Library::builtin().unwrap();
-        let ids: Vec<String> = library.formulas().map(|f| f.id.clone()).collect();
         let mut all = scene::Fractal {
             slots: vec![],
             ..Default::default()
         };
-        for id in &ids {
-            let slot = scene::FormulaSlot::new(id, vec![]);
+        for def in library.formulas() {
+            let slot = scene::FormulaSlot::new(&def.id, vec![]);
             all.slots.push(slot.clone());
             let single = scene::Fractal {
                 slots: vec![slot],
                 ..Default::default()
             };
             let de = formulas::compose(&single, &library).unwrap();
-            validate(&format!(
-                "{}
-{de}",
-                include_str!("shaders/raymarch.wgsl")
-            ));
+            validate(&format!("{RAYMARCH_WGSL}\n{de}"));
         }
         let de = formulas::compose(&all, &library).unwrap();
-        validate(&format!(
-            "{}
-{de}",
-            include_str!("shaders/raymarch.wgsl")
-        ));
+        validate(&format!("{RAYMARCH_WGSL}\n{de}"));
     }
 }

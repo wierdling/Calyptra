@@ -87,7 +87,7 @@ every preset headlessly to `renders/presets/`.
 | **M2** ✅ | Formula library, hybrids, shader composer, hot reload | Mix Mandelbox + Mandelbulb |
 | **M3** ✅ | Lighting & color: AO, soft shadows, fog, glow, orbit-trap coloring, OKLab gradient editor, palette presets | Genuinely pretty pictures |
 | **M4** ✅ | Hi-res stills: tiled rendering, supersampling, PNG16/EXR, scene save/load | Print-quality images |
-| **M5** | Path tracer: progressive, DOF, environment light, tone mapping, OIDN denoise | Photoreal renders |
+| **M5** ✅ | Path tracer: progressive, DOF, environment light, tone mapping, OIDN denoise | Photoreal renders |
 | **M6** | Animation: timeline, keyframes, Catmull-Rom camera splines, easing, preview, resumable render queue, ffmpeg | Movies |
 | **M7** | Custom formulas: user WGSL snippets, hot reload, in-UI error reporting | Your own formulas |
 | **M8** | Flame fractals: chaos game compute shader, variations, log-density + density estimation | Flames |
@@ -117,6 +117,23 @@ every preset headlessly to `renders/presets/`.
 - Scene files are JSON wrapped with a format name and version; floats
   round-trip exactly.
 - CLI: `cargo run --release -p export --example export_still -- out.png 3840 2160 16 [--scene s.json]`.
+
+## Path tracer (M5) notes
+
+- `fs_pathtrace` in `raymarch.wgsl`: Monte Carlo GI over the DE surface;
+  sun as a disk light (next-event estimation, soft shadows), sky gradient as
+  environment, diffuse + Phong-lobe glossy layer from the existing
+  specular / shininess controls, Russian roulette, thin-lens DOF.
+- Viewport accumulates progressively (float32 running sum): preview gets
+  16-sample anti-aliasing when idle; path tracing converges to the target
+  sample count. Navigation always uses the fast preview. Exposure / tone
+  map / denoise changes re-present without restarting accumulation.
+- Denoiser: edge-avoiding à-trous (5 levels), guided by albedo, normal and
+  depth from `fs_aux`; filters demodulated lighting so fractal color detail
+  stays sharp. Exports denoise in 1024-px blocks with a 64-px apron.
+- AgX tone mapping (CPU and GPU).
+- Not done: HDRI environment maps; Intel Open Image Denoise (needs Intel's
+  binary release, ~50 MB, as an optional feature).
 
 ## Flame fractals (M8) notes
 

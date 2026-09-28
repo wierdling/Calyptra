@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use formulas::Library;
 use render::{RaymarchRenderer, Renderer, ToneMap, Viewport};
-use scene::{DeMode, Scene};
+use scene::{DeMode, RenderMode, Scene};
 
 use crate::camera_control::{CameraController, CameraMode, NavInput};
 use crate::color_ui::{GradientEditor, coloring_ui};
@@ -24,11 +24,27 @@ struct ShaderKey {
     library_generation: u64,
 }
 
-/// What the current viewport image was rendered from.
+/// Samples per pixel the preview accumulates when idle (anti-aliasing).
+const PREVIEW_SAMPLES: u32 = 16;
+
+/// What the accumulated viewport samples were rendered from. Settings that
+/// only affect presentation (exposure, tone map, denoising, sample target)
+/// are excluded, so changing them does not restart a converging image.
 #[derive(PartialEq)]
 struct RenderedState {
     scene: Scene,
     size: (u32, u32),
+}
+
+impl RenderedState {
+    fn new(scene: &Scene, size: (u32, u32)) -> Self {
+        let mut scene = scene.clone();
+        scene.display = Default::default();
+        scene.render.denoise = false;
+        scene.render.denoise_strength = 0.0;
+        scene.render.viewport_samples = 0;
+        Self { scene, size }
+    }
 }
 
 pub struct FractalApp {
@@ -54,6 +70,8 @@ pub struct FractalApp {
     interactive_scale: f32,
     last_interaction: Instant,
     rendered: Option<RenderedState>,
+    /// Scene last presented (for display-only changes).
+    presented: Option<Scene>,
     adapter_summary: String,
 }
 
@@ -96,6 +114,7 @@ impl FractalApp {
             interactive_scale: 0.5,
             last_interaction: Instant::now(),
             rendered: None,
+            presented: None,
             adapter_summary,
         })
     }
@@ -110,6 +129,7 @@ impl FractalApp {
             self.fractal_section(ui);
             self.color_section(ui);
             self.lighting_section(ui);
+            self.render_section(ui);
             self.quality_section(ui);
             self.display_section(ui);
             self.performance_section(ui);
@@ -148,6 +168,28 @@ impl FractalApp {
             if let Some(probe) = self.renderer.probe() {
                 ui.label(format!("Surface distance: {:.3e}", probe.distance));
             }
+            ui.add(
+                egui::Slider::new(&mut self.scene.camera.aperture, 0.0..=0.5)
+                    .logarithmic(true)
+                    .text("Aperture"),
+            )
+            .on_hover_text("Depth of field (path tracer). 0 = everything sharp");
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut self.scene.camera.focus_distance)
+                        .range(1.0e-6..=1.0e4)
+                        .speed(0.01)
+                        .prefix("focus "),
+                );
+                let center_hit = self.renderer.probe().and_then(|p| p.center_hit);
+                if ui
+                    .add_enabled(center_hit.is_some(), egui::Button::new("Focus at center"))
+                    .clicked()
+                    && let Some(distance) = center_hit
+                {
+                    self.scene.camera.focus_distance = f64::from(distance);
+                }
+            });
             if ui.button("Reset camera").clicked() {
                 self.scene.camera = scene::Camera::default();
                 self.camera_control.orbit_target = glam::DVec3::ZERO;
@@ -383,6 +425,47 @@ impl FractalApp {
             });
     }
 
+    fn render_section(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Render")
+            .default_open(true)
+            .show(ui, |ui| {
+                let r = &mut self.scene.render;
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut r.mode, RenderMode::Preview, "Preview");
+                    ui.selectable_value(&mut r.mode, RenderMode::PathTrace, "Path trace");
+                });
+                let target = match r.mode {
+                    RenderMode::Preview => PREVIEW_SAMPLES,
+                    RenderMode::PathTrace => r.viewport_samples.max(1),
+                };
+                let done = self.viewport.samples().min(target);
+                ui.add(
+                    egui::ProgressBar::new(done as f32 / target as f32)
+                        .text(format!("{done} / {target} samples")),
+                );
+                if r.mode == RenderMode::PathTrace {
+                    ui.add(egui::Slider::new(&mut r.max_bounces, 1..=8).text("Bounces"));
+                    ui.add(
+                        egui::Slider::new(&mut r.viewport_samples, 16..=4096)
+                            .logarithmic(true)
+                            .text("Target samples"),
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut r.sun_size_degrees, 0.1..=30.0)
+                            .logarithmic(true)
+                            .text("Sun size (°)"),
+                    );
+                    ui.checkbox(&mut r.denoise, "Denoise");
+                    ui.add_enabled(
+                        r.denoise,
+                        egui::Slider::new(&mut r.denoise_strength, 0.1..=4.0)
+                            .logarithmic(true)
+                            .text("Denoise strength"),
+                    );
+                }
+            });
+    }
+
     fn quality_section(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("Quality")
             .default_open(false)
@@ -424,7 +507,8 @@ impl FractalApp {
                     .selected_text(format!("{:?}", self.scene.display.tone_map))
                     .show_ui(ui, |ui| {
                         let tone_map = &mut self.scene.display.tone_map;
-                        ui.selectable_value(tone_map, ToneMap::Aces, "Aces");
+                        ui.selectable_value(tone_map, ToneMap::Aces, "ACES");
+                        ui.selectable_value(tone_map, ToneMap::AgX, "AgX");
                         ui.selectable_value(tone_map, ToneMap::Clamp, "Clamp");
                     });
                 ui.checkbox(&mut self.scene.display.dither, "Dither");
@@ -487,10 +571,20 @@ impl FractalApp {
             ((rect.height() * pixels).round() as u32).max(1),
         );
 
-        let state = RenderedState {
-            scene: self.scene.clone(),
-            size,
+        // While moving, always the fast preview; path tracing resumes once
+        // the camera settles.
+        let mut scene = self.scene.clone();
+        if !settled {
+            scene.render.mode = RenderMode::Preview;
+        }
+        let target_samples = match (settled, scene.render.mode) {
+            (false, _) => 1,
+            (true, RenderMode::Preview) => PREVIEW_SAMPLES,
+            (true, RenderMode::PathTrace) => scene.render.viewport_samples.max(1),
         };
+
+        let state = RenderedState::new(&scene, size);
+        let mut refining = false;
         if self.rendered.as_ref() != Some(&state) {
             if self.viewport.resize(&rs.device, size.0, size.1) {
                 rs.renderer.write().update_egui_texture_from_wgpu_texture(
@@ -501,8 +595,18 @@ impl FractalApp {
                 );
             }
             self.viewport
-                .render(&rs.device, &rs.queue, &mut self.renderer, &self.scene);
+                .render(&rs.device, &rs.queue, &mut self.renderer, &scene, 0);
             self.rendered = Some(state);
+            self.presented = Some(scene);
+        } else if self.viewport.samples() < target_samples {
+            let sample = self.viewport.samples();
+            self.viewport
+                .render(&rs.device, &rs.queue, &mut self.renderer, &scene, sample);
+            self.presented = Some(scene);
+            refining = true;
+        } else if self.presented.as_ref() != Some(&scene) {
+            self.viewport.redisplay(&rs.device, &rs.queue, &scene);
+            self.presented = Some(scene);
         }
 
         ui.painter().image(
@@ -512,7 +616,7 @@ impl FractalApp {
             egui::Color32::WHITE,
         );
 
-        if navigating {
+        if navigating || refining {
             ui.ctx().request_repaint();
         } else if !settled || self.fit_from_frame.is_some() {
             // Wake up to render the full-resolution frame.

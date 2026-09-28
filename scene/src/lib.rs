@@ -17,6 +17,7 @@ pub struct Scene {
     pub shading: Shading,
     pub coloring: Coloring,
     pub display: DisplaySettings,
+    pub render: RenderSettings,
 }
 
 /// Right-handed, Y-up. The camera looks down its local -Z axis.
@@ -29,6 +30,11 @@ pub struct Camera {
     pub position: DVec3,
     pub orientation: DQuat,
     pub fov_y_degrees: f64,
+    /// Lens radius in world units; 0 = pinhole (everything sharp). Path
+    /// tracer only.
+    pub aperture: f64,
+    /// Distance along the view direction that is in perfect focus.
+    pub focus_distance: f64,
 }
 
 impl Default for Camera {
@@ -43,6 +49,8 @@ impl Camera {
             position,
             orientation: DQuat::IDENTITY,
             fov_y_degrees,
+            aperture: 0.0,
+            focus_distance: position.distance(target),
         };
         camera.look_at(target, DVec3::Y);
         camera
@@ -228,6 +236,8 @@ pub enum ToneMap {
     Clamp,
     #[default]
     Aces,
+    /// Troy Sobotka's AgX: gentler highlight roll-off and hue preservation.
+    AgX,
 }
 
 /// How linear HDR becomes a displayable image.
@@ -247,6 +257,44 @@ impl Default for DisplaySettings {
             exposure_ev: 0.0,
             tone_map: ToneMap::Aces,
             dither: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RenderMode {
+    /// Fast direct lighting with AO approximations; interactive.
+    #[default]
+    Preview,
+    /// Monte Carlo path tracing: global illumination, soft sun shadows,
+    /// depth of field. Converges over many samples.
+    PathTrace,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RenderSettings {
+    pub mode: RenderMode,
+    /// Light bounces after the first hit (path tracer).
+    pub max_bounces: u32,
+    /// Viewport stops refining after this many samples per pixel.
+    pub viewport_samples: u32,
+    /// Sun disk angular diameter: larger = softer shadows (path tracer).
+    pub sun_size_degrees: f32,
+    pub denoise: bool,
+    /// Denoiser edge tolerance: higher = smoother, may blur detail.
+    pub denoise_strength: f32,
+}
+
+impl Default for RenderSettings {
+    fn default() -> Self {
+        Self {
+            mode: RenderMode::Preview,
+            max_bounces: 3,
+            viewport_samples: 256,
+            sun_size_degrees: 2.0,
+            denoise: true,
+            denoise_strength: 1.0,
         }
     }
 }

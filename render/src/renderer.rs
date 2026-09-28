@@ -1,5 +1,8 @@
 /// Format of the linear HDR render target every renderer writes to.
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Format of the denoiser guide targets (albedo, normal + depth). Full
+/// float so depth keeps its precision and exports can read it directly.
+pub const AUX_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 /// Linear, scene-referred color target.
 pub struct HdrTarget {
@@ -11,6 +14,15 @@ pub struct HdrTarget {
 
 impl HdrTarget {
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        Self::with_format(device, width, height, HDR_FORMAT)
+    }
+
+    pub fn with_format(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("hdr target"),
             size: wgpu::Extent3d {
@@ -21,10 +33,11 @@ impl HdrTarget {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: HDR_FORMAT,
+            format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
@@ -64,8 +77,11 @@ impl Region {
 #[derive(Clone, Copy, Debug)]
 pub struct FrameInput<'a> {
     pub scene: &'a scene::Scene,
-    /// Monotonic frame counter; useful for progressive sampling and noise seeds.
+    /// Monotonic frame counter (probe bookkeeping).
     pub frame: u32,
+    /// Index of this sample within the current accumulation: seeds random
+    /// sampling. 0 = first sample of a new image.
+    pub sample: u32,
     pub region: Region,
 }
 
@@ -101,6 +117,21 @@ pub trait Renderer {
         input: &FrameInput<'_>,
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     );
+
+    /// Renders denoiser guides for the same `input`: surface albedo and
+    /// normal + hit distance (w < 0 on background), in [`AUX_FORMAT`].
+    /// Returns `false` if this renderer has none.
+    fn render_aux(
+        &mut self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        _encoder: &mut wgpu::CommandEncoder,
+        _albedo: &HdrTarget,
+        _normal_depth: &HdrTarget,
+        _input: &FrameInput<'_>,
+    ) -> bool {
+        false
+    }
 
     /// Collects finished asynchronous GPU readbacks. Never blocks.
     fn poll(&mut self, _device: &wgpu::Device) {}

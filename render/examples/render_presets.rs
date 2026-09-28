@@ -2,6 +2,7 @@
 //!
 //!     cargo run -p render --example render_presets              # each preset → renders/presets/*.png
 //!     cargo run -p render --example render_presets -- --palettes  # one contact sheet of all palettes
+//!     cargo run -p render --example render_presets -- --pathtrace # path traced, 64 spp, denoised
 
 use std::path::Path;
 
@@ -16,6 +17,7 @@ struct Gpu {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let palettes = std::env::args().any(|a| a == "--palettes");
+    let path_trace = std::env::args().any(|a| a == "--pathtrace");
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
@@ -33,11 +35,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if palettes {
         palette_sheet(&gpu, &out_dir)
     } else {
-        each_preset(&gpu, &out_dir.join("presets"))
+        each_preset(&gpu, &out_dir.join("presets"), path_trace)
     }
 }
 
-fn each_preset(gpu: &Gpu, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn each_preset(
+    gpu: &Gpu,
+    out_dir: &Path,
+    path_trace: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(out_dir)?;
     let (width, height) = (960, 600);
     let mut renderer = RaymarchRenderer::new(&gpu.device);
@@ -45,13 +51,19 @@ fn each_preset(gpu: &Gpu, out_dir: &Path) -> Result<(), Box<dyn std::error::Erro
         let name = preset.name;
         let mut scene = scene::Scene::default();
         preset.apply(&mut scene);
+        if path_trace {
+            scene.render.mode = scene::RenderMode::PathTrace;
+        }
+        let start = std::time::Instant::now();
         let pixels = render(gpu, &mut renderer, &scene, width, height)?;
+        let elapsed = start.elapsed();
         let file_name = name
             .to_lowercase()
             .replace(|c: char| !c.is_ascii_alphanumeric(), "_");
-        let path = out_dir.join(format!("{file_name}.png"));
+        let suffix = if path_trace { "_pt" } else { "" };
+        let path = out_dir.join(format!("{file_name}{suffix}.png"));
         write_png(&path, width, height, &pixels)?;
-        println!("{name} -> {}", path.display());
+        println!("{name} ({elapsed:.1?}) -> {}", path.display());
     }
     Ok(())
 }
@@ -108,7 +120,7 @@ fn render(
 
     // Measure first: fit the gradient to the visible values, as the app does.
     let mut viewport = Viewport::new(&gpu.device, &gpu.queue, width, height);
-    viewport.render(&gpu.device, &gpu.queue, renderer, &scene);
+    viewport.render(&gpu.device, &gpu.queue, renderer, &scene, 0);
     for _ in 0..2 {
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
         renderer.poll(&gpu.device);
@@ -117,11 +129,15 @@ fn render(
         scene.coloring.fit_to_range(lo, hi);
     }
 
-    // Then the real render through the export path (tiled, 4 samples).
+    // Then the real render through the export path (tiled).
+    let samples = match scene.render.mode {
+        scene::RenderMode::Preview => 4,
+        scene::RenderMode::PathTrace => 64,
+    };
     let settings = StillSettings {
         width,
         height,
-        samples: 4,
+        samples,
     };
     let image = render_still(&gpu.device, &gpu.queue, renderer, &scene, settings, |_| {
         true

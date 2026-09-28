@@ -1,9 +1,9 @@
-use scene::{ColorSource, Fractal, Wrap};
+use scene::{ColorSource, Fractal, RenderMode, Wrap};
 
 use crate::hot_reload::WatchedFile;
 use crate::readback::Readback;
 use crate::{
-    FULLSCREEN_WGSL, FrameInput, HDR_FORMAT, HdrTarget, Probe, Region, Renderer,
+    AUX_FORMAT, FULLSCREEN_WGSL, FrameInput, HDR_FORMAT, HdrTarget, Probe, Region, Renderer,
     fullscreen_pipeline, validate_wgsl,
 };
 
@@ -42,12 +42,17 @@ struct Uniforms {
     color_frequency: f32,
     color_source: u32,
     color_wrap: u32,
-    _pad: [f32; 3],
+    sample_index: u32,
+    max_bounces: u32,
+    aperture: f32,
+    focus_distance: f32,
+    sun_cos_half_angle: f32,
+    _pad: [f32; 2],
     slot_params: [[f32; 4]; PARAM_VEC4S],
 }
 
 impl Uniforms {
-    fn new(scene: &scene::Scene, region: &Region) -> Self {
+    fn new(scene: &scene::Scene, region: &Region, sample: u32) -> Self {
         let (width, height) = (region.full_width, region.full_height);
         let camera = &scene.camera;
         let fractal = &scene.fractal;
@@ -118,7 +123,12 @@ impl Uniforms {
                 Wrap::Mirror => 1,
                 Wrap::Clamp => 2,
             },
-            _pad: [0.0; 3],
+            sample_index: sample,
+            max_bounces: scene.render.max_bounces,
+            aperture: camera.aperture as f32,
+            focus_distance: camera.focus_distance as f32,
+            sun_cos_half_angle: (scene.render.sun_size_degrees * 0.5).to_radians().cos(),
+            _pad: [0.0; 2],
             slot_params,
         }
     }
@@ -151,7 +161,9 @@ fn color_range(samples: &[f32]) -> Option<(f32, f32)> {
 }
 
 struct Pipelines {
-    render: wgpu::RenderPipeline,
+    preview: wgpu::RenderPipeline,
+    pathtrace: wgpu::RenderPipeline,
+    aux: wgpu::RenderPipeline,
     probe: wgpu::ComputePipeline,
 }
 
@@ -327,6 +339,15 @@ impl RaymarchRenderer {
         true
     }
 
+    /// Uniform writes land at the next submit, so every pass in one
+    /// submission sees the last write: callers pair render and render_aux
+    /// only with identical inputs.
+    fn write_uniforms(&mut self, queue: &wgpu::Queue, input: &FrameInput<'_>) {
+        let uniforms = Uniforms::new(input.scene, &input.region, input.sample);
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        self.upload_gradient(queue, &input.scene.coloring.gradient);
+    }
+
     fn upload_gradient(&mut self, queue: &wgpu::Queue, gradient: &color::Gradient) {
         if self.uploaded_gradient.as_ref() == Some(gradient) {
             return;
@@ -370,13 +391,12 @@ impl RaymarchRenderer {
             label: Some("raymarch"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let render = fullscreen_pipeline(
-            device,
-            "raymarch",
-            &module,
-            &self.uniform_layout,
-            HDR_FORMAT,
-        );
+        let pipeline = |entry: &str, formats: &[wgpu::TextureFormat]| {
+            fullscreen_pipeline(device, entry, &module, &self.uniform_layout, entry, formats)
+        };
+        let preview = pipeline("fs_preview", &[HDR_FORMAT]);
+        let pathtrace = pipeline("fs_pathtrace", &[HDR_FORMAT]);
+        let aux = pipeline("fs_aux", &[AUX_FORMAT, AUX_FORMAT]);
         let probe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("raymarch probe"),
             bind_group_layouts: &[Some(&self.uniform_layout), Some(&self.probe_layout)],
@@ -390,14 +410,19 @@ impl RaymarchRenderer {
             compilation_options: Default::default(),
             cache: None,
         });
-        self.pipelines = Some(Pipelines { render, probe });
+        self.pipelines = Some(Pipelines {
+            preview,
+            pathtrace,
+            aux,
+            probe,
+        });
         self.error = None;
     }
 }
 
 impl Renderer for RaymarchRenderer {
     fn name(&self) -> &str {
-        "Raymarch preview"
+        "Raymarcher"
     }
 
     fn render(
@@ -409,9 +434,7 @@ impl Renderer for RaymarchRenderer {
         input: &FrameInput<'_>,
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
-        let uniforms = Uniforms::new(input.scene, &input.region);
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-        self.upload_gradient(queue, &input.scene.coloring.gradient);
+        self.write_uniforms(queue, input);
 
         if let Some(pipelines) = &self.pipelines
             && self.probe_readback.is_idle()
@@ -446,10 +469,52 @@ impl Renderer for RaymarchRenderer {
             multiview_mask: None,
         });
         if let Some(pipelines) = &self.pipelines {
-            pass.set_pipeline(&pipelines.render);
+            pass.set_pipeline(match input.scene.render.mode {
+                RenderMode::Preview => &pipelines.preview,
+                RenderMode::PathTrace => &pipelines.pathtrace,
+            });
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
+    }
+
+    fn render_aux(
+        &mut self,
+        _device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        albedo: &HdrTarget,
+        normal_depth: &HdrTarget,
+        input: &FrameInput<'_>,
+    ) -> bool {
+        let Some(pipelines) = &self.pipelines else {
+            return false;
+        };
+        let aux = pipelines.aux.clone();
+        self.write_uniforms(queue, input);
+        fn attachment(target: &HdrTarget) -> Option<wgpu::RenderPassColorAttachment<'_>> {
+            Some(wgpu::RenderPassColorAttachment {
+                view: &target.view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })
+        }
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("denoiser guides"),
+            color_attachments: &[attachment(albedo), attachment(normal_depth)],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&aux);
+        pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+        pass.draw(0..3, 0..1);
+        true
     }
 
     fn poll(&mut self, device: &wgpu::Device) {

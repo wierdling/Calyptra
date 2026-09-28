@@ -10,14 +10,15 @@ use render::{RaymarchRenderer, StillSettings};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let scene_path = args
+    let scene_path = args.iter().position(|a| a == "--scene").map(|i| {
+        args.remove(i);
+        PathBuf::from(args.remove(i))
+    });
+    let png8 = args
         .iter()
-        .position(|a| a == "--scene")
-        .map(|i| {
-            args.remove(i);
-            PathBuf::from(args.remove(i))
-        });
-    let png8 = args.iter().position(|a| a == "--png8").map(|i| args.remove(i)).is_some();
+        .position(|a| a == "--png8")
+        .map(|i| args.remove(i))
+        .is_some();
     let out = PathBuf::from(args.first().ok_or("usage: OUT [WIDTH HEIGHT SAMPLES]")?);
     let number = |i: usize, default: u32| args.get(i).map_or(Ok(default), |a| a.parse());
     let settings = StillSettings {
