@@ -77,6 +77,49 @@ impl Viewport {
         &self.display_view
     }
 
+    /// Copies the display image back to the CPU as tightly packed RGBA8
+    /// (gamma-encoded) rows. Blocks until the GPU is done.
+    pub fn read_display_pixels(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<u8> {
+        let (width, height) = self.size();
+        let row_bytes = width * 4;
+        let padded_row_bytes = row_bytes.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("display readback"),
+            size: u64::from(padded_row_bytes * height),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            self.display_texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_row_bytes),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        buffer.map_async(wgpu::MapMode::Read, .., |_| {});
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+
+        let data = buffer
+            .get_mapped_range(..)
+            .expect("display readback buffer should be mapped after waiting");
+        let mut pixels = Vec::with_capacity((row_bytes * height) as usize);
+        for row in data.chunks_exact(padded_row_bytes as usize) {
+            pixels.extend_from_slice(&row[..row_bytes as usize]);
+        }
+        pixels
+    }
+
     pub fn timing_supported(&self) -> bool {
         self.timer.is_some()
     }

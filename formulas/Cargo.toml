@@ -1,0 +1,8 @@
+[package]
+name = "formulas"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+scene = { path = "../scene" }
+glam.workspace = true

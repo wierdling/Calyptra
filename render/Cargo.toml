@@ -9,3 +9,9 @@ bytemuck.workspace = true
 log.workspace = true
 glam.workspace = true
 scene = { path = "../scene" }
+formulas = { path = "../formulas" }
+
+[dev-dependencies]
+formulas = { path = "../formulas" }
+pollster = "1"
+png = "0.18"

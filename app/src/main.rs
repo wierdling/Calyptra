@@ -2,6 +2,7 @@
 
 mod app;
 mod camera_control;
+mod fractal_ui;
 
 use std::sync::Arc;
 

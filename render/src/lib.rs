@@ -7,19 +7,34 @@
 
 mod display;
 mod gpu_timer;
-mod mandelbulb;
+mod hot_reload;
+mod raymarch;
 mod readback;
 mod renderer;
 mod viewport;
 
 pub use gpu_timer::GpuTimings;
-pub use mandelbulb::MandelbulbRenderer;
+pub use raymarch::RaymarchRenderer;
 pub use renderer::{FrameInput, HDR_FORMAT, HdrTarget, Probe, Renderer};
 pub use viewport::{DISPLAY_FORMAT, DisplaySettings, ToneMap, Viewport};
 
 /// Vertex shader shared by all full-screen passes. Prepended to fragment
 /// shader sources by [`fullscreen_shader`].
 const FULLSCREEN_WGSL: &str = include_str!("shaders/fullscreen.wgsl");
+
+/// Parses and validates WGSL with naga, returning a readable error. wgpu
+/// treats invalid shaders as fatal, so dynamic sources are checked first.
+pub(crate) fn validate_wgsl(source: &str) -> Result<(), String> {
+    use wgpu::naga;
+    let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::default(),
+    )
+    .validate(&module)
+    .map_err(|e| e.emit_to_string(source))?;
+    Ok(())
+}
 
 /// Builds a shader module whose source is the full-screen vertex stage
 /// followed by `fragment_src`.
@@ -73,18 +88,14 @@ pub(crate) fn fullscreen_pipeline(
 
 #[cfg(test)]
 mod tests {
-    use wgpu::naga;
+    use super::*;
 
     fn validate(fragment_src: &str) {
-        let source = format!("{}\n{fragment_src}", super::FULLSCREEN_WGSL);
-        let module = naga::front::wgsl::parse_str(&source)
-            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::default(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+        let source = format!(
+            "{FULLSCREEN_WGSL}
+{fragment_src}"
+        );
+        validate_wgsl(&source).unwrap_or_else(|e| panic!("{e}"));
     }
 
     #[test]
@@ -93,7 +104,56 @@ mod tests {
     }
 
     #[test]
-    fn mandelbulb_shader_is_valid() {
-        validate(include_str!("shaders/mandelbulb.wgsl"));
+    fn every_preset_produces_a_valid_raymarch_shader() {
+        let library = formulas::Library::builtin().unwrap();
+        for preset in formulas::presets() {
+            let de = formulas::compose(&preset.fractal, &library).unwrap();
+            let source = format!(
+                "{}
+{de}",
+                include_str!("shaders/raymarch.wgsl")
+            );
+            let source = format!(
+                "{FULLSCREEN_WGSL}
+{source}"
+            );
+            validate_wgsl(&source).unwrap_or_else(|e| {
+                panic!(
+                    "{}:
+{e}",
+                    preset.name
+                )
+            });
+        }
+    }
+
+    #[test]
+    fn every_formula_validates_alone_and_in_a_hybrid() {
+        let library = formulas::Library::builtin().unwrap();
+        let ids: Vec<String> = library.formulas().map(|f| f.id.clone()).collect();
+        let mut all = scene::Fractal {
+            slots: vec![],
+            ..Default::default()
+        };
+        for id in &ids {
+            let slot = scene::FormulaSlot::new(id, vec![]);
+            all.slots.push(slot.clone());
+            let single = scene::Fractal {
+                slots: vec![slot],
+                ..Default::default()
+            };
+            let de = formulas::compose(&single, &library).unwrap();
+            validate(&format!(
+                "{}
+{de}",
+                include_str!("shaders/raymarch.wgsl")
+            ));
+        }
+        let de = formulas::compose(&all, &library).unwrap();
+        validate(&format!(
+            "{}
+{de}",
+            include_str!("shaders/raymarch.wgsl")
+        ));
     }
 }

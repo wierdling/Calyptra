@@ -69,8 +69,14 @@ Crates are added as milestones need them.
 
 ### Starter formulas
 
-Mandelbulb (power n), Mandelbox, Menger sponge, Kaleidoscopic IFS, Quaternion
-Julia, Amazing Surf, Pseudo-Kleinian, Juliabulb.
+M2 ships Mandelbulb (power n), Mandelbox, Menger sponge, KIFS octahedron,
+Amazing Surf, and a Julia mode for every formula (Juliabulb). Quaternion Julia
+(4D state) and Pseudo-Kleinian (custom final DE) move to M7, which extends the
+formula format.
+
+Formula files live in `formulas/wgsl/`; the header format is documented in
+`formulas/src/lib.rs`. `cargo run -p render --example render_presets` renders
+every preset headlessly to `renders/presets/`.
 
 ## Milestones
 
@@ -78,7 +84,7 @@ Julia, Amazing Surf, Pseudo-Kleinian, Juliabulb.
 |---|---|---|
 | **M0** ✅ | Workspace, egui + wgpu window, offscreen full-screen shader, GPU timing | Window with a live shader |
 | **M1** ✅ | Mandelbulb raymarcher, orbit + fly camera, basic shading, parameter panel | Fly around a Mandelbulb |
-| **M2** | Formula library, hybrids, shader composer, hot reload | Mix Mandelbox + Mandelbulb |
+| **M2** ✅ | Formula library, hybrids, shader composer, hot reload | Mix Mandelbox + Mandelbulb |
 | **M3** | Lighting & color: AO, soft shadows, fog, glow, orbit-trap coloring, OKLab gradient editor, palette presets | Genuinely pretty pictures |
 | **M4** | Hi-res stills: tiled rendering, supersampling, PNG16/EXR, scene save/load | Print-quality images |
 | **M5** | Path tracer: progressive, DOF, environment light, tone mapping, OIDN denoise | Photoreal renders |

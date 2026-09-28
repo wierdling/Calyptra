@@ -1,13 +1,26 @@
 use std::time::{Duration, Instant};
 
-use render::{DisplaySettings, MandelbulbRenderer, ToneMap, Viewport};
-use scene::Scene;
+use formulas::Library;
+use render::{DisplaySettings, RaymarchRenderer, Renderer, ToneMap, Viewport};
+use scene::{DeMode, Scene};
 
 use crate::camera_control::{CameraController, CameraMode, NavInput};
+use crate::fractal_ui::fractal_editor;
 
 const SCENE_KEY: &str = "scene";
 /// How long after the last interaction before rendering at full resolution.
 const SETTLE_TIME: Duration = Duration::from_millis(150);
+/// How often to check shader files for edits (debug builds).
+const HOT_RELOAD_INTERVAL: Duration = Duration::from_millis(500);
+
+/// The parts of a fractal that change the generated shader. Parameter
+/// values are uniforms and do not appear here.
+#[derive(PartialEq)]
+struct ShaderKey {
+    slots: Vec<(String, u32)>,
+    de_mode: DeMode,
+    library_generation: u64,
+}
 
 /// What the current viewport image was rendered from.
 #[derive(PartialEq)]
@@ -21,7 +34,12 @@ pub struct FractalApp {
     scene: Scene,
     camera_control: CameraController,
     viewport: Viewport,
-    renderer: Box<dyn render::Renderer>,
+    renderer: RaymarchRenderer,
+    library: Library,
+    shader_key: Option<ShaderKey>,
+    /// Formula library or composition problem, shown in the panel.
+    formula_error: Option<String>,
+    last_reload_check: Instant,
     texture_id: egui::TextureId,
     display: DisplaySettings,
     /// Render resolution relative to the physical pixel size of the view.
@@ -57,7 +75,11 @@ impl FractalApp {
         Ok(Self {
             scene,
             camera_control: CameraController::default(),
-            renderer: Box::new(MandelbulbRenderer::new(&rs.device)),
+            renderer: RaymarchRenderer::new(&rs.device),
+            library: Library::load_default().map_err(anyhow::Error::msg)?,
+            shader_key: None,
+            formula_error: None,
+            last_reload_check: Instant::now(),
             viewport,
             texture_id,
             display: DisplaySettings::default(),
@@ -124,17 +146,73 @@ impl FractalApp {
     }
 
     fn fractal_section(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("Mandelbulb")
+        egui::CollapsingHeader::new("Fractal")
             .default_open(true)
             .show(ui, |ui| {
-                let m = &mut self.scene.mandelbulb;
-                ui.add(egui::Slider::new(&mut m.power, 1.0..=16.0).text("Power"));
-                ui.add(egui::Slider::new(&mut m.iterations, 1..=64).text("Iterations"));
-                ui.add(egui::Slider::new(&mut m.bailout, 1.5..=16.0).text("Bailout"));
-                if ui.button("Reset fractal").clicked() {
-                    *m = Default::default();
+                let error_color = ui.visuals().error_fg_color;
+                for error in [self.formula_error.as_deref(), self.renderer.error()]
+                    .into_iter()
+                    .flatten()
+                {
+                    egui::ScrollArea::vertical()
+                        .id_salt("shader error")
+                        .max_height(160.0)
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new(error).monospace().color(error_color));
+                        });
+                }
+                if let Some(preset) = fractal_editor(ui, &mut self.scene.fractal, &self.library) {
+                    preset.apply(&mut self.scene);
+                    self.camera_control.orbit_target = glam::DVec3::ZERO;
                 }
             });
+    }
+
+    /// Recompiles the shader if the fractal's shape or the library changed.
+    fn update_shader(&mut self, device: &wgpu::Device) {
+        self.library.normalize(&mut self.scene.fractal);
+        let key = ShaderKey {
+            slots: self
+                .scene
+                .fractal
+                .slots
+                .iter()
+                .map(|s| (s.formula.clone(), s.repeat))
+                .collect(),
+            de_mode: self.scene.fractal.de_mode,
+            library_generation: self.library.generation(),
+        };
+        if self.shader_key.as_ref() == Some(&key) {
+            return;
+        }
+        match formulas::compose(&self.scene.fractal, &self.library) {
+            Ok(source) => {
+                self.renderer.set_de_source(device, source);
+                self.formula_error = None;
+            }
+            Err(error) => self.formula_error = Some(error.to_string()),
+        }
+        self.shader_key = Some(key);
+        self.rendered = None;
+    }
+
+    /// Picks up edits to formula files and the raymarch template.
+    fn hot_reload(&mut self, device: &wgpu::Device) {
+        if self.last_reload_check.elapsed() < HOT_RELOAD_INTERVAL {
+            return;
+        }
+        self.last_reload_check = Instant::now();
+        match self.library.reload_if_changed() {
+            Some(Ok(())) => log::info!("formula library reloaded"),
+            Some(Err(error)) => {
+                log::error!("formula library: {error}");
+                self.formula_error = Some(error);
+            }
+            None => {}
+        }
+        if self.renderer.hot_reload(device) {
+            self.rendered = None;
+        }
     }
 
     fn shading_section(&mut self, ui: &mut egui::Ui) {
@@ -257,7 +335,9 @@ impl FractalApp {
         let Some(rs) = frame.wgpu_render_state() else {
             return;
         };
-        self.viewport.poll(&rs.device, self.renderer.as_mut());
+        self.viewport.poll(&rs.device, &mut self.renderer);
+        self.hot_reload(&rs.device);
+        self.update_shader(&rs.device);
 
         // Cheap preview while moving, full resolution once settled.
         let settled = now.duration_since(self.last_interaction) >= SETTLE_TIME;
@@ -289,7 +369,7 @@ impl FractalApp {
             self.viewport.render(
                 &rs.device,
                 &rs.queue,
-                self.renderer.as_mut(),
+                &mut self.renderer,
                 &self.scene,
                 &self.display,
             );

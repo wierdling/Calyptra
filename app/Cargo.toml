@@ -14,3 +14,4 @@ env_logger.workspace = true
 anyhow.workspace = true
 glam.workspace = true
 scene = { path = "../scene" }
+formulas = { path = "../formulas" }

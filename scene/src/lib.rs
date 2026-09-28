@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Scene {
     pub camera: Camera,
-    pub mandelbulb: Mandelbulb,
+    pub fractal: Fractal,
     pub quality: Quality,
     pub shading: Shading,
 }
@@ -63,21 +63,74 @@ impl Camera {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Mandelbulb {
-    pub power: f32,
+/// A (possibly hybrid) iterated fractal: formula slots applied in order,
+/// cycling until `iterations` is reached or the point escapes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Fractal {
+    pub slots: Vec<FormulaSlot>,
     pub iterations: u32,
     pub bailout: f32,
+    pub de_mode: DeMode,
+    /// Julia mode: add the constant `julia_c` each iteration instead of the
+    /// sample position.
+    pub julia: bool,
+    pub julia_c: glam::Vec3,
 }
 
-impl Default for Mandelbulb {
+impl Default for Fractal {
     fn default() -> Self {
         Self {
-            power: 8.0,
+            slots: vec![FormulaSlot::new("mandelbulb", vec![8.0])],
             iterations: 12,
             bailout: 2.0,
+            de_mode: DeMode::Auto,
+            julia: false,
+            julia_c: glam::Vec3::new(0.3, -0.5, 0.2),
         }
     }
+}
+
+impl Fractal {
+    /// Maximum number of formula slots in a hybrid.
+    pub const MAX_SLOTS: usize = 8;
+    /// Maximum number of parameters per formula.
+    pub const MAX_PARAMS: usize = 8;
+}
+
+/// One formula in a hybrid sequence.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FormulaSlot {
+    /// Formula id (the `.wgsl` file stem), e.g. `"mandelbox"`.
+    pub formula: String,
+    /// Parameter values in the formula's declaration order. Missing values
+    /// take the formula's defaults.
+    pub params: Vec<f32>,
+    /// Consecutive iterations this slot runs before moving to the next.
+    pub repeat: u32,
+}
+
+impl FormulaSlot {
+    pub fn new(formula: &str, params: Vec<f32>) -> Self {
+        Self {
+            formula: formula.to_owned(),
+            params,
+            repeat: 1,
+        }
+    }
+}
+
+/// How the final distance estimate is computed from the escaped orbit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeMode {
+    /// Use the first slot's declared mode.
+    #[default]
+    Auto,
+    /// `0.5 * ln(r) * r / dr`, for power-type fractals (Mandelbulb).
+    Logarithmic,
+    /// `r / |dr|`, for folding fractals (Mandelbox, IFS).
+    Linear,
+    /// `(max(|z|) - 1) / |dr|`, for cube-based IFS (Menger).
+    Box,
 }
 
 /// Raymarching accuracy / speed trade-offs.
