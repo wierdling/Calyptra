@@ -1,0 +1,10 @@
+[package]
+name = "anim"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+scene = { path = "../scene" }
+glam.workspace = true
+serde.workspace = true
+serde_json = { version = "1", features = ["float_roundtrip"] }

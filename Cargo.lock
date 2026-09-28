@@ -82,6 +82,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "anim"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "scene",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -790,8 +800,10 @@ dependencies = [
 name = "export"
 version = "0.1.0"
 dependencies = [
+ "anim",
  "exr",
  "formulas",
+ "glam",
  "png",
  "pollster 1.0.1",
  "render",
@@ -911,6 +923,7 @@ dependencies = [
 name = "fractals"
 version = "0.1.0"
 dependencies = [
+ "anim",
  "anyhow",
  "color 0.1.0",
  "eframe",

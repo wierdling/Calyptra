@@ -88,7 +88,7 @@ every preset headlessly to `renders/presets/`.
 | **M3** ✅ | Lighting & color: AO, soft shadows, fog, glow, orbit-trap coloring, OKLab gradient editor, palette presets | Genuinely pretty pictures |
 | **M4** ✅ | Hi-res stills: tiled rendering, supersampling, PNG16/EXR, scene save/load | Print-quality images |
 | **M5** ✅ | Path tracer: progressive, DOF, environment light, tone mapping, OIDN denoise | Photoreal renders |
-| **M6** | Animation: timeline, keyframes, Catmull-Rom camera splines, easing, preview, resumable render queue, ffmpeg | Movies |
+| **M6** ✅ | Animation: timeline, keyframes, Catmull-Rom camera splines, easing, preview, resumable render queue, ffmpeg | Movies |
 | **M7** | Custom formulas: user WGSL snippets, hot reload, in-UI error reporting | Your own formulas |
 | **M8** | Flame fractals: chaos game compute shader, variations, log-density + density estimation | Flames |
 
@@ -134,6 +134,21 @@ every preset headlessly to `renders/presets/`.
 - AgX tone mapping (CPU and GPU).
 - Not done: HDRI environment maps; Intel Open Image Denoise (needs Intel's
   binary release, ~50 MB, as an optional feature).
+
+## Animation (M6) notes
+
+- `anim` crate: keyframes are full scene snapshots, interpolated through
+  their serialized form (numbers: time-aware Catmull-Rom clamped to the
+  segment; integers rounded; discrete values switch at the next key).
+  Camera: splines on position, look-at target (at the focus distance) and
+  up vector, rebuilt with `look_at`. Per-key easing.
+- Timeline panel: transport, scrubbing, draggable keys, add/update/delete,
+  easing; camera path drawn over the viewport. Playback uses the preview.
+- Movies (`export::render_movie`): 16-bit PNG frames through the still
+  pipeline (path tracing + denoise if the keys use it), resumable, guarded
+  by `job.json`; ffmpeg encodes H.264 / H.265 10-bit / ProRes 422 HQ.
+- CLI: `cargo run --release -p export --example export_movie -- out.mp4 1920 1080 16 [--project p.json]`.
+- Not done: motion blur (sub-frame accumulation), audio.
 
 ## Flame fractals (M8) notes
 

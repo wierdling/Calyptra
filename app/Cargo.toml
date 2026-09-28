@@ -4,6 +4,7 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+anim = { path = "../anim" }
 render = { path = "../render" }
 eframe.workspace = true
 egui.workspace = true

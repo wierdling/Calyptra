@@ -4,6 +4,9 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+wgpu.workspace = true
+anim = { path = "../anim" }
+formulas = { path = "../formulas" }
 render = { path = "../render" }
 scene = { path = "../scene" }
 serde.workspace = true
@@ -13,6 +16,6 @@ png = "0.18"
 exr = "1.74"
 
 [dev-dependencies]
-formulas = { path = "../formulas" }
-wgpu.workspace = true
 pollster = "1"
+anim = { path = "../anim" }
+glam.workspace = true

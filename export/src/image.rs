@@ -45,25 +45,35 @@ pub fn save_image(
     scene: &Scene,
 ) -> Result<(), ExportError> {
     match format {
-        ImageFormat::Png8 => write_png(path, image, &scene.display, png::BitDepth::Eight, scene),
-        ImageFormat::Png16 => write_png(path, image, &scene.display, png::BitDepth::Sixteen, scene),
+        ImageFormat::Png8 => write_png(path, image, png::BitDepth::Eight, scene, false),
+        ImageFormat::Png16 => write_png(path, image, png::BitDepth::Sixteen, scene, false),
         ImageFormat::Exr => write_exr(path, image, &scene.display),
     }
+}
+
+/// Writes a 16-bit movie frame: fast compression, since frames are
+/// intermediate files and saving must not dominate render time.
+pub(crate) fn save_frame(path: &Path, image: &HdrImage, scene: &Scene) -> Result<(), ExportError> {
+    write_png(path, image, png::BitDepth::Sixteen, scene, true)
 }
 
 fn write_png(
     path: &Path,
     image: &HdrImage,
-    display: &DisplaySettings,
     depth: png::BitDepth,
     scene: &Scene,
+    fast: bool,
 ) -> Result<(), ExportError> {
+    let display = &scene.display;
     let png_err = |e: png::EncodingError| ExportError::Png(e.to_string());
     let file = BufWriter::new(std::fs::File::create(path)?);
     let mut encoder = png::Encoder::new(file, image.width, image.height);
     encoder.set_color(png::ColorType::Rgb);
     encoder.set_depth(depth);
     encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+    if fast {
+        encoder.set_compression(png::Compression::Fast);
+    }
     encoder
         .add_itxt_chunk(PNG_SCENE_KEY.to_owned(), scene_to_json(scene)?)
         .map_err(png_err)?;

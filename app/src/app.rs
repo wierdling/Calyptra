@@ -8,8 +8,11 @@ use crate::camera_control::{CameraController, CameraMode, NavInput};
 use crate::color_ui::{GradientEditor, coloring_ui};
 use crate::export_ui::{ExportContext, ExportDialog};
 use crate::fractal_ui::fractal_editor;
+use crate::movie_ui::MovieDialog;
+use crate::timeline_ui::{Timeline, draw_camera_path};
 
 const SCENE_KEY: &str = "scene";
+const ANIMATION_KEY: &str = "animation";
 /// How long after the last interaction before rendering at full resolution.
 const SETTLE_TIME: Duration = Duration::from_millis(150);
 /// How often to check shader files for edits (debug builds).
@@ -61,6 +64,10 @@ pub struct FractalApp {
     /// Fit the gradient using the first probe from this frame onwards.
     fit_from_frame: Option<u32>,
     export_dialog: ExportDialog,
+    animation: anim::Animation,
+    timeline: Timeline,
+    movie_dialog: MovieDialog,
+    last_tick: Instant,
     /// Result of the last scene open/save, shown in the menu bar.
     file_message: Option<Result<String, String>>,
     texture_id: egui::TextureId,
@@ -107,6 +114,13 @@ impl FractalApp {
             gradient_editor: GradientEditor::default(),
             fit_from_frame: None,
             export_dialog: ExportDialog::default(),
+            animation: cc
+                .storage
+                .and_then(|storage| eframe::get_value(storage, ANIMATION_KEY))
+                .unwrap_or_default(),
+            timeline: Timeline::new(),
+            movie_dialog: MovieDialog::default(),
+            last_tick: Instant::now(),
             file_message: None,
             viewport,
             texture_id,
@@ -239,6 +253,14 @@ impl FractalApp {
                 if ui.button(label).clicked() {
                     self.export_dialog.open = true;
                 }
+                let label = if self.movie_dialog.is_running() {
+                    "Render movie… (rendering)"
+                } else {
+                    "Render movie…"
+                };
+                if ui.button(label).clicked() {
+                    self.movie_dialog.open = true;
+                }
             });
             match &self.file_message {
                 Some(Ok(message)) => {
@@ -260,9 +282,12 @@ impl FractalApp {
         else {
             return;
         };
-        self.file_message = Some(match export::load_scene(&path) {
-            Ok(scene) => {
-                self.scene = scene;
+        self.file_message = Some(match export::load_project(&path) {
+            Ok(project) => {
+                self.scene = project.scene;
+                self.animation = project.animation.unwrap_or_default();
+                self.timeline.selected = None;
+                self.timeline.time = 0.0;
                 self.camera_control.orbit_target = glam::DVec3::ZERO;
                 Ok(format!("Opened {}", path.display()))
             }
@@ -279,7 +304,8 @@ impl FractalApp {
         else {
             return;
         };
-        self.file_message = Some(match export::save_scene(&path, &self.scene) {
+        let animation = (!self.animation.keyframes.is_empty()).then_some(&self.animation);
+        self.file_message = Some(match export::save_scene(&path, &self.scene, animation) {
             Ok(()) => Ok(format!("Saved {}", path.display())),
             Err(error) => Err(format!("{}: {error}", path.display())),
         });
@@ -546,7 +572,7 @@ impl FractalApp {
             .camera_control
             .update(&mut self.scene.camera, &input, probe);
         let now = Instant::now();
-        if navigating {
+        if navigating || self.timeline.playing {
             self.last_interaction = now;
         }
 
@@ -615,8 +641,17 @@ impl FractalApp {
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
+        if self.timeline.show_path && !self.timeline.playing {
+            draw_camera_path(
+                &ui.painter_at(rect),
+                rect,
+                &self.scene.camera,
+                &self.animation,
+                self.timeline.selected,
+            );
+        }
 
-        if navigating || refining {
+        if navigating || refining || self.timeline.playing {
             ui.ctx().request_repaint();
         } else if !settled || self.fit_from_frame.is_some() {
             // Wake up to render the full-resolution frame.
@@ -631,6 +666,21 @@ impl FractalApp {
 impl eframe::App for FractalApp {
     fn ui(&mut self, root: &mut egui::Ui, frame: &mut eframe::Frame) {
         egui::Panel::top("menu").show(root, |ui| self.menu_bar(ui));
+
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_tick).as_secs_f64();
+        self.last_tick = now;
+        let mut seek = self.timeline.tick(&self.animation, dt);
+        egui::Panel::bottom("timeline").show(root, |ui| {
+            let response = self.timeline.ui(ui, &mut self.animation, &self.scene);
+            seek |= response.seek;
+            if response.open_movie_window {
+                self.movie_dialog.open = true;
+            }
+        });
+        if seek && let Some(scene) = self.animation.scene_at(self.timeline.time) {
+            self.scene = scene;
+        }
 
         egui::Panel::left("controls")
             .default_size(300.0)
@@ -651,10 +701,13 @@ impl eframe::App for FractalApp {
                 viewport_gpu_ms: self.viewport.gpu_timings().map(|t| t.render_ms),
             };
             self.export_dialog.ui(root.ctx(), export);
+            self.movie_dialog
+                .ui(root.ctx(), &rs.device, &rs.queue, &self.animation);
         }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, SCENE_KEY, &self.scene);
+        eframe::set_value(storage, ANIMATION_KEY, &self.animation);
     }
 }
