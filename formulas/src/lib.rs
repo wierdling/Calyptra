@@ -23,5 +23,5 @@ mod library;
 mod presets;
 
 pub use compose::{ComposeError, compose};
-pub use library::{FormulaDef, Library, ParamDef, parse_formula};
+pub use library::{FormulaDef, Library, Origin, ParamDef, formula_template, parse_formula};
 pub use presets::{Preset, presets};

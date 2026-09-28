@@ -146,6 +146,8 @@ pub enum DeMode {
     Linear,
     /// `(max(|z|) - 1) / |dr|`, for cube-based IFS (Menger).
     Box,
+    /// The formula's own `<id>_de(z, dr)` function (e.g. Pseudo-Kleinian).
+    Custom,
 }
 
 /// Raymarching accuracy / speed trade-offs.

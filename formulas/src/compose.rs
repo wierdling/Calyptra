@@ -3,13 +3,15 @@ use std::fmt::Write;
 
 use scene::{DeMode, Fractal};
 
-use crate::Library;
+use crate::{FormulaDef, Library};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ComposeError {
     NoSlots,
     TooManySlots,
     UnknownFormula(String),
+    /// Custom distance estimate selected, but no slot's formula defines one.
+    NoCustomDe,
 }
 
 impl std::fmt::Display for ComposeError {
@@ -18,6 +20,10 @@ impl std::fmt::Display for ComposeError {
             Self::NoSlots => write!(f, "the fractal has no formula slots"),
             Self::TooManySlots => write!(f, "at most {} formula slots", Fractal::MAX_SLOTS),
             Self::UnknownFormula(id) => write!(f, "unknown formula {id:?}"),
+            Self::NoCustomDe => write!(
+                f,
+                "custom distance estimate selected, but no formula in the hybrid defines one"
+            ),
         }
     }
 }
@@ -74,10 +80,32 @@ pub fn compose(fractal: &Fractal, library: &Library) -> Result<String, ComposeEr
         let _ = writeln!(out, "}};\n\n{}\n", def.source.trim_end());
     }
 
+    // `<id>_Params(...)` built from slot `index`'s uniforms.
+    let params = |index: usize, def: &FormulaDef| {
+        let args: Vec<String> = if def.params.is_empty() {
+            vec!["0.0".to_owned()]
+        } else {
+            (0..def.params.len()).map(|j| param_ref(index, j)).collect()
+        };
+        format!("{}_Params({})", def.id, args.join(", "))
+    };
+
+    // The iterated point is always 4D; 3D formulas see (and update) xyz.
+    let call = |index: usize, def: &FormulaDef| {
+        if def.vec4_state {
+            format!("{}(&z, &dr, c, {});", def.id, params(index, def))
+        } else {
+            format!(
+                "var z3 = z.xyz; {}(&z3, &dr, c, {}); z = vec4<f32>(z3, z.w);",
+                def.id,
+                params(index, def)
+            )
+        }
+    };
+
     // Iteration `i` runs the slot whose repeat range contains `i % cycle`.
     let cycle: u32 = fractal.slots.iter().map(|s| s.repeat.max(1)).sum();
     let mut cases = String::new();
-    let mut single_call = String::new();
     let mut start = 0;
     for (index, (slot, def)) in fractal.slots.iter().zip(&defs).enumerate() {
         let repeat = slot.repeat.max(1);
@@ -86,47 +114,44 @@ pub fn compose(fractal: &Fractal, library: &Library) -> Result<String, ComposeEr
             selectors.push("default".to_owned());
         }
         start += repeat;
-
-        let args: Vec<String> = (0..def.params.len().max(1))
-            .map(|j| {
-                if def.params.is_empty() {
-                    "0.0".to_owned()
-                } else {
-                    format!(
-                        "u.slot_params[{}].{}",
-                        2 * index + j / 4,
-                        ["x", "y", "z", "w"][j % 4]
-                    )
-                }
-            })
-            .collect();
-        single_call = format!(
-            "{}(&z, &dr, c, {}_Params({}));",
-            def.id,
-            def.id,
-            args.join(", ")
-        );
         let _ = writeln!(
             cases,
-            "            case {}: {{ {single_call} }}",
-            selectors.join(", ")
+            "            case {}: {{ {} }}",
+            selectors.join(", "),
+            call(index, def)
         );
     }
     // A lone formula needs no dispatch.
     let step = if fractal.slots.len() == 1 {
-        format!("        {single_call}\n")
+        format!("        {}\n", call(0, defs[0]))
     } else {
         format!("        switch i % {cycle}u {{\n{cases}        }}\n")
     };
+
+    // Formulas that pick a 4D slice set the starting 4th coordinate.
+    let mut init = String::new();
+    for (index, def) in defs.iter().enumerate() {
+        if let Some(j) = def.init_w {
+            let _ = writeln!(init, "    z.w = {};", param_ref(index, j));
+        }
+    }
 
     let de_mode = match fractal.de_mode {
         DeMode::Auto => defs[0].de_mode,
         mode => mode,
     };
     let distance = match de_mode {
-        DeMode::Logarithmic | DeMode::Auto => "0.5 * log(r) * r / dr",
-        DeMode::Linear => "r / abs(dr)",
-        DeMode::Box => "(max(max(abs(z.x), abs(z.y)), abs(z.z)) - 1.0) / abs(dr)",
+        DeMode::Logarithmic | DeMode::Auto => "0.5 * log(r) * r / dr".to_owned(),
+        DeMode::Linear => "r / abs(dr)".to_owned(),
+        DeMode::Box => "(max(max(abs(z.x), abs(z.y)), abs(z.z)) - 1.0) / abs(dr)".to_owned(),
+        DeMode::Custom => {
+            let (index, def) = defs
+                .iter()
+                .enumerate()
+                .find(|(_, def)| def.custom_de)
+                .ok_or(ComposeError::NoCustomDe)?;
+            format!("{}_de(z, dr, {})", def.id, params(index, def))
+        }
     };
 
     // The same iteration twice: `de` is the hot path used for marching,
@@ -136,10 +161,10 @@ pub fn compose(fractal: &Fractal, library: &Library) -> Result<String, ComposeEr
         out,
         "// ---- distance estimator ----
 fn de(p: vec3<f32>) -> f32 {{
-    var z = p;
+    var z = vec4<f32>(p, 0.0);
     var dr = 1.0;
     let c = select(p, u.julia_c.xyz, u.julia_c.w > 0.5);
-    var r = length(z);
+{init}    var r = length(z);
     for (var i = 0u; i < u.iterations; i++) {{
 {step}        r = length(z);
         if r > u.bailout {{
@@ -152,10 +177,10 @@ fn de(p: vec3<f32>) -> f32 {{
 // x = min |z|^2 (point trap), y = min distance to the axis planes,
 // z = smoothed escape iteration, w = distance estimate.
 fn de_trap(p: vec3<f32>) -> vec4<f32> {{
-    var z = p;
+    var z = vec4<f32>(p, 0.0);
     var dr = 1.0;
     let c = select(p, u.julia_c.xyz, u.julia_c.w > 0.5);
-    var r = length(z);
+{init}    var r = length(z);
     var point_trap = 1.0e10;
     var plane_trap = 1.0e10;
     var smooth_iter = f32(u.iterations);
@@ -177,21 +202,38 @@ fn de_trap(p: vec3<f32>) -> vec4<f32> {{
     Ok(out)
 }
 
+/// WGSL expression for parameter `j` of slot `index`.
+fn param_ref(index: usize, j: usize) -> String {
+    format!(
+        "u.slot_params[{}].{}",
+        2 * index + j / 4,
+        ["x", "y", "z", "w"][j % 4]
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use scene::FormulaSlot;
 
+    fn fractal(slots: Vec<FormulaSlot>) -> Fractal {
+        Fractal {
+            slots,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn single_formula_composes() {
         let library = Library::builtin().unwrap();
         let src = compose(&Fractal::default(), &library).unwrap();
-        assert!(src.contains("struct mandelbulb_Params {\n    power: f32,"));
-        assert!(
-            src.contains(
-                "        mandelbulb(&z, &dr, c, mandelbulb_Params(u.slot_params[0].x));\n"
-            )
-        );
+        assert!(src.contains(
+            "struct mandelbulb_Params {
+    power: f32,"
+        ));
+        assert!(src.contains(
+            "var z3 = z.xyz; mandelbulb(&z3, &dr, c, mandelbulb_Params(u.slot_params[0].x));"
+        ));
         assert!(!src.contains("switch"));
         assert!(src.contains("0.5 * log(r) * r / dr"));
     }
@@ -201,36 +243,60 @@ mod tests {
         let library = Library::builtin().unwrap();
         let mut box_slot = FormulaSlot::new("mandelbox", vec![]);
         box_slot.repeat = 2;
-        let fractal = Fractal {
-            slots: vec![
+        let src = compose(
+            &fractal(vec![
                 box_slot,
                 FormulaSlot::new("mandelbulb", vec![]),
                 FormulaSlot::new("mandelbox", vec![]),
-            ],
-            ..Default::default()
-        };
-        let src = compose(&fractal, &library).unwrap();
+            ]),
+            &library,
+        )
+        .unwrap();
         assert_eq!(src.matches("struct mandelbox_Params").count(), 1);
         assert!(src.contains("switch i % 4u"));
-        assert!(src.contains("case 0u, 1u: { mandelbox("));
-        assert!(src.contains("case 2u: { mandelbulb("));
+        assert!(src.contains("case 0u, 1u: { var z3 = z.xyz; mandelbox("));
+        assert!(src.contains("case 2u: { var z3 = z.xyz; mandelbulb("));
         // Third slot's params start at element 4.
-        assert!(src.contains(
-            "case 3u, default: { mandelbox(&z, &dr, c, mandelbox_Params(u.slot_params[4].x"
-        ));
+        assert!(src.contains("case 3u, default: { var z3 = z.xyz; mandelbox(&z3, &dr, c, mandelbox_Params(u.slot_params[4].x"));
         // Auto DE follows the first slot.
         assert!(src.contains("r / abs(dr)"));
     }
 
     #[test]
-    fn unknown_formula_is_an_error() {
+    fn four_d_formulas_iterate_the_full_state_and_set_the_slice() {
         let library = Library::builtin().unwrap();
-        let fractal = Fractal {
-            slots: vec![FormulaSlot::new("nope", vec![])],
+        let src = compose(
+            &fractal(vec![FormulaSlot::new("quaternion_julia", vec![])]),
+            &library,
+        )
+        .unwrap();
+        assert!(src.contains("quaternion_julia(&z, &dr, c,"));
+        // `slice` is the fifth parameter: element 1, x.
+        assert!(src.contains("    z.w = u.slot_params[1].x;"));
+    }
+
+    #[test]
+    fn custom_distance_estimate_uses_the_formula_function() {
+        let library = Library::builtin().unwrap();
+        let src = compose(
+            &fractal(vec![FormulaSlot::new("pseudo_kleinian", vec![])]),
+            &library,
+        )
+        .unwrap();
+        assert!(src.contains("return pseudo_kleinian_de(z, dr, pseudo_kleinian_Params("));
+
+        let bulb = Fractal {
+            de_mode: DeMode::Custom,
             ..Default::default()
         };
+        assert_eq!(compose(&bulb, &library), Err(ComposeError::NoCustomDe));
+    }
+
+    #[test]
+    fn unknown_formula_is_an_error() {
+        let library = Library::builtin().unwrap();
         assert_eq!(
-            compose(&fractal, &library),
+            compose(&fractal(vec![FormulaSlot::new("nope", vec![])]), &library),
             Err(ComposeError::UnknownFormula("nope".into()))
         );
     }

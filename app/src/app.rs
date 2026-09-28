@@ -7,6 +7,7 @@ use scene::{DeMode, RenderMode, Scene};
 use crate::camera_control::{CameraController, CameraMode, NavInput};
 use crate::color_ui::{GradientEditor, coloring_ui};
 use crate::export_ui::{ExportContext, ExportDialog};
+use crate::formulas_ui::{FormulasPanel, formula_problems, user_formula_dir};
 use crate::fractal_ui::fractal_editor;
 use crate::movie_ui::MovieDialog;
 use crate::timeline_ui::{Timeline, draw_camera_path};
@@ -57,8 +58,11 @@ pub struct FractalApp {
     renderer: RaymarchRenderer,
     library: Library,
     shader_key: Option<ShaderKey>,
-    /// Formula library or composition problem, shown in the panel.
+    /// Composition problem for the current fractal, shown in the panel.
     formula_error: Option<String>,
+    /// Library load errors and user formulas that do not compile.
+    formula_problems: Vec<String>,
+    formulas_panel: FormulasPanel,
     last_reload_check: Instant,
     gradient_editor: GradientEditor,
     /// Fit the gradient using the first probe from this frame onwards.
@@ -97,6 +101,11 @@ impl FractalApp {
             .and_then(|storage| eframe::get_value(storage, SCENE_KEY))
             .unwrap_or_default();
 
+        let library = Library::load_default()
+            .map_err(anyhow::Error::msg)?
+            .with_user_dir(&user_formula_dir());
+        let formula_problems = formula_problems(&library);
+
         let viewport = Viewport::new(&rs.device, &rs.queue, 64, 64);
         let texture_id = rs.renderer.write().register_native_texture(
             &rs.device,
@@ -107,9 +116,11 @@ impl FractalApp {
             scene,
             camera_control: CameraController::default(),
             renderer: RaymarchRenderer::new(&rs.device),
-            library: Library::load_default().map_err(anyhow::Error::msg)?,
+            library,
             shader_key: None,
             formula_error: None,
+            formula_problems,
+            formulas_panel: FormulasPanel::default(),
             last_reload_check: Instant::now(),
             gradient_editor: GradientEditor::default(),
             fit_from_frame: None,
@@ -141,6 +152,7 @@ impl FractalApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             self.camera_section(ui);
             self.fractal_section(ui);
+            self.formulas_section(ui);
             self.color_section(ui);
             self.lighting_section(ui);
             self.render_section(ui);
@@ -365,17 +377,31 @@ impl FractalApp {
             return;
         }
         self.last_reload_check = Instant::now();
-        match self.library.reload_if_changed() {
-            Some(Ok(())) => log::info!("formula library reloaded"),
-            Some(Err(error)) => {
-                log::error!("formula library: {error}");
-                self.formula_error = Some(error);
+        if self.library.reload_if_changed() {
+            log::info!("formula library reloaded");
+            self.formula_problems = formula_problems(&self.library);
+            for problem in &self.formula_problems {
+                log::warn!("{problem}");
             }
-            None => {}
         }
         if self.renderer.hot_reload(device) {
             self.rendered = None;
         }
+    }
+
+    fn formulas_section(&mut self, ui: &mut egui::Ui) {
+        let title = if self.formula_problems.is_empty() {
+            "Custom formulas".to_owned()
+        } else {
+            format!("Custom formulas ⚠ {}", self.formula_problems.len())
+        };
+        egui::CollapsingHeader::new(title)
+            .id_salt("custom formulas")
+            .default_open(!self.formula_problems.is_empty())
+            .show(ui, |ui| {
+                self.formulas_panel
+                    .ui(ui, &self.library, &self.formula_problems);
+            });
     }
 
     fn lighting_section(&mut self, ui: &mut egui::Ui) {

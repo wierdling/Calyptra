@@ -89,7 +89,7 @@ every preset headlessly to `renders/presets/`.
 | **M4** ✅ | Hi-res stills: tiled rendering, supersampling, PNG16/EXR, scene save/load | Print-quality images |
 | **M5** ✅ | Path tracer: progressive, DOF, environment light, tone mapping, OIDN denoise | Photoreal renders |
 | **M6** ✅ | Animation: timeline, keyframes, Catmull-Rom camera splines, easing, preview, resumable render queue, ffmpeg | Movies |
-| **M7** | Custom formulas: user WGSL snippets, hot reload, in-UI error reporting | Your own formulas |
+| **M7** ✅ | Custom formulas: user WGSL snippets, hot reload, in-UI error reporting | Your own formulas |
 | **M8** | Flame fractals: chaos game compute shader, variations, log-density + density estimation | Flames |
 
 ## Coloring (M3) notes
@@ -149,6 +149,17 @@ every preset headlessly to `renders/presets/`.
   by `job.json`; ffmpeg encodes H.264 / H.265 10-bit / ProRes 422 HQ.
 - CLI: `cargo run --release -p export --example export_movie -- out.mp4 1920 1080 16 [--project p.json]`.
 - Not done: motion blur (sub-frame accumulation), audio.
+
+## Custom formulas (M7) notes
+
+- User formulas: `%APPDATA%\Fractals\formulas`, hot-reloaded in all builds;
+  format documented in `docs/custom-formulas.md`.
+- Format extensions: `@state vec4` (the composer always iterates a 4D point;
+  3D formulas see `.xyz`), `@init_w` (4D slice), `@de custom` with
+  `fn <id>_de(z, dr, P)`.
+- New built-ins: Quaternion Julia (4D), Pseudo-Kleinian (custom DE).
+- `render::check_formula` compiles each user formula alone and maps errors
+  to `file:line:col`; broken files only disable themselves.
 
 ## Flame fractals (M8) notes
 

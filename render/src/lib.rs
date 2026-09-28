@@ -8,6 +8,7 @@
 mod accumulate;
 mod denoise;
 mod display;
+mod formula_check;
 mod gpu_timer;
 mod hot_reload;
 mod raymarch;
@@ -17,6 +18,7 @@ mod still;
 mod viewport;
 
 pub use display::display_transform;
+pub use formula_check::check_formula;
 pub use gpu_timer::GpuTimings;
 pub use raymarch::RaymarchRenderer;
 pub use renderer::{AUX_FORMAT, FrameInput, HDR_FORMAT, HdrTarget, Probe, Region, Renderer};

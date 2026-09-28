@@ -4,6 +4,7 @@ mod app;
 mod camera_control;
 mod color_ui;
 mod export_ui;
+mod formulas_ui;
 mod fractal_ui;
 mod movie_ui;
 mod timeline_ui;

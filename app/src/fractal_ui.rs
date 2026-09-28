@@ -121,6 +121,7 @@ pub fn fractal_editor(
                 DeMode::Logarithmic,
                 DeMode::Linear,
                 DeMode::Box,
+                DeMode::Custom,
             ] {
                 ui.selectable_value(&mut fractal.de_mode, mode, format!("{mode:?}"));
             }

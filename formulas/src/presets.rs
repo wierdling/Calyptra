@@ -66,6 +66,30 @@ pub fn presets() -> Vec<Preset> {
     );
     bulb_box.fractal.de_mode = DeMode::Linear;
 
+    let quaternion = preset(
+        "Quaternion Julia",
+        vec![slot("quaternion_julia")],
+        12,
+        4.0,
+        3.2,
+    );
+
+    // An endless lattice: start inside it, looking down a corridor.
+    let mut kleinian = preset(
+        "Pseudo-Kleinian",
+        vec![slot("pseudo_kleinian")],
+        12,
+        1000.0,
+        1.0,
+    );
+    kleinian.camera = Camera::looking_at(
+        DVec3::new(0.35, 0.05, 0.6),
+        DVec3::new(-1.2, -0.25, 1.1),
+        60.0,
+    );
+    // Fog and ray length for a scene seen from inside, not from a distance.
+    kleinian.view_distance = 4.0;
+
     vec![
         preset("Mandelbulb", vec![slot("mandelbulb")], 12, 2.0, 2.8),
         juliabulb,
@@ -80,6 +104,8 @@ pub fn presets() -> Vec<Preset> {
         ),
         preset("Amazing Surf", vec![slot("amazing_surf")], 12, 100.0, 14.0),
         bulb_box,
+        quaternion,
+        kleinian,
     ]
 }
 

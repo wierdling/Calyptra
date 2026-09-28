@@ -285,7 +285,8 @@ impl MovieDialog {
             .name("movie".into())
             .spawn(move || {
                 let result = (|| {
-                    let library = formulas::Library::load_default()?;
+                    let library = formulas::Library::load_default()?
+                        .with_user_dir(&crate::formulas_ui::user_formula_dir());
                     let p = &worker_progress;
                     export::render_movie(
                         &device,
