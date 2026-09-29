@@ -189,14 +189,18 @@ impl Timeline {
             tick += step;
         }
 
-        // Keyframes: diamonds, draggable.
+        // Keyframes: diamonds. A plain drag scrubs (the playhead often sits
+        // on a key, and grabbing it must not carry the key along); Shift+drag
+        // moves the key in time.
+        let shift = ui.input(|i| i.modifiers.shift);
         let mut moved = false;
         let mut seek = false;
         for index in 0..animation.keyframes.len() {
             let center = pos2(to_x(animation.keyframes[index].time), rect.center().y + 4.0);
             let hit = Rect::from_center_size(center, vec2(14.0, 18.0));
-            let key_response =
-                ui.interact(hit, ui.id().with(("key", index)), Sense::click_and_drag());
+            let key_response = ui
+                .interact(hit, ui.id().with(("key", index)), Sense::click_and_drag())
+                .on_hover_text("Click to select · drag to scrub · Shift+drag to move the key");
             if key_response.clicked() || key_response.drag_started() {
                 self.selected = Some(index);
                 self.time = animation.keyframes[index].time;
@@ -206,9 +210,13 @@ impl Timeline {
                 && let Some(pointer) = key_response.interact_pointer_pos()
             {
                 let time = to_time(pointer.x);
-                animation.keyframes[index].time = time;
+                if shift {
+                    animation.keyframes[index].time = time;
+                    moved = true;
+                } else {
+                    seek = true;
+                }
                 self.time = time;
-                moved = true;
             }
             let selected = self.selected == Some(index);
             let fill = if selected {

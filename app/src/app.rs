@@ -1069,14 +1069,26 @@ impl eframe::App for FractalApp {
         let now = Instant::now();
         let dt = now.duration_since(self.last_tick).as_secs_f64();
         self.last_tick = now;
-        let mut seek = self.timeline.tick(&self.animation, dt);
+        let playing = self.timeline.tick(&self.animation, dt);
+        let mut scrubbed = false;
         egui::Panel::bottom("timeline").show(root, |ui| {
             let response = self.timeline.ui(ui, &mut self.animation, &self.scene);
-            seek |= response.seek;
+            scrubbed = response.seek;
             if response.open_movie_window {
                 self.movie_dialog.open = true;
             }
         });
+        // Scrubbing outside the keyed range keeps the current view, so the
+        // natural workflow — move the view, advance the playhead, add a key —
+        // doesn't snap back to the last key and lose the change.
+        let in_keyed_range = match (
+            self.animation.keyframes.first(),
+            self.animation.keyframes.last(),
+        ) {
+            (Some(first), Some(last)) => (first.time..=last.time).contains(&self.timeline.time),
+            _ => false,
+        };
+        let seek = playing || (scrubbed && in_keyed_range);
         if seek && let Some(scene) = self.animation.scene_at(self.timeline.time) {
             self.scene = scene;
         }

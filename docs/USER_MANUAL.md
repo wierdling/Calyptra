@@ -473,7 +473,7 @@ The **timeline** at the bottom:
     out, Ease in/out).
   - **🗑**: delete the key.
 - The track below: click or drag on empty space to scrub; click a ◆ to
-  select a key and jump to it; drag a ◆ to move it in time.
+  select a key and jump to it; drag a ◆ to scrub, Shift+drag a ◆ to move it in time.
 
 A typical workflow:
 
