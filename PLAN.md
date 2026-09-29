@@ -1,4 +1,4 @@
-# Fractal Renderer — Project Plan
+# Calyptra — Project Plan
 
 A Windows desktop application for exploring and rendering **3D fractals** to
 high-quality stills and movies, with first-class color/palette tools. Built in
@@ -112,7 +112,7 @@ every preset headlessly to `renders/presets/`.
   safe), R2 sub-pixel jitter, float32 accumulation. 4K at 16 spp renders in
   ~3 s on the Iris Xe.
 - `export` crate: PNG 8-bit (dithered) / 16-bit, OpenEXR (linear, exposure
-  applied). PNGs embed the scene as JSON (iTXt `fractals-scene`), so
+  applied). PNGs embed the scene as JSON (iTXt `calyptra-scene`; `fractals-scene` from before the rename is still read), so
   File → Open scene accepts exported PNGs.
 - Scene files are JSON wrapped with a format name and version; floats
   round-trip exactly.
@@ -152,7 +152,7 @@ every preset headlessly to `renders/presets/`.
 
 ## Custom formulas (M7) notes
 
-- User formulas: `%APPDATA%\Fractals\formulas`, hot-reloaded in all builds;
+- User formulas: `%APPDATA%\Calyptra\formulas`, hot-reloaded in all builds;
   format documented in `docs/custom-formulas.md`.
 - Format extensions: `@state vec4` (the composer always iterates a 4D point;
   3D formulas see `.xyz`), `@init_w` (4D slice), `@de custom` with
@@ -187,7 +187,7 @@ every preset headlessly to `renders/presets/`.
   transforms, hex and `<color>` palettes, camera `center`/`scale`/`zoom`/
   `rotate`. flam3's y-down convention is mirrored exactly through the final
   transform's post-affine. Unsupported variations and limits (4 variations,
-  12 transforms) produce warnings. Our 3D terms and camera use `fractals_*`
+  12 transforms) produce warnings. Our 3D terms and camera use `calyptra_*` (`fractals_*` still read)
   attributes; our files round-trip exactly. The CLI renders `.flame` files
   directly.
 - Apophysis 2.08 3D hack / JWildfire compatibility, checked against
@@ -201,9 +201,19 @@ every preset headlessly to `renders/presets/`.
     ztranslate, zscale; `pre_blur` as a true pre-variation.
   - Brightness: ours = Apophysis × 1.4 × 2^zoom (Apophysis doesn't
     normalize away the extra samples it draws when zoomed); fitted.
-    `fractals_brightness` keeps our own value exact.
+    `calyptra_brightness` keeps our own value exact.
   - A file's `quality` is ignored (usually a preview setting).
-- Not done: density estimation (adaptive blur of sparse areas).
+- Density estimation (flam3's adaptive blur): a pixel with `d` hits per
+  histogram cell spreads over radius `clamp(max / d^curve, min, max)`
+  (defaults 9 / 0 / 0.4, as flam3; `.flame` `estimator_*` attributes).
+  Done with a pyramid so the cost doesn't depend on the radius: each
+  log-scaled pixel is split between the two nearest of a sharp layer and 5
+  block-sum levels (block `s` ≈ kernel radius / 1.83, matching the
+  kernel's variance), and the tone pass adds each level upsampled with a
+  cubic B-spline (~80 taps per pixel). Energy is conserved; early
+  progressive frames come out smooth and sharpen as samples accumulate.
+- Tone-only changes (brightness, gamma, vibrancy, background, smoothing,
+  quality) re-tone the existing histogram instead of restarting it.
 
 ## Random 3D fractals notes
 

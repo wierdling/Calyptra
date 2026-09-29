@@ -1,6 +1,7 @@
 //! Command-line still export, the same path as the app's Export window.
 //!
 //!     cargo run --release -p export --example export_still -- OUT.(png|exr) [WIDTH HEIGHT SAMPLES] [--scene SCENE.json|png|flame] [--png8]
+//!         [--quality POINTS_PER_PIXEL] [--smoothing RADIUS]    (flames)
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -19,6 +20,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .position(|a| a == "--png8")
         .map(|i| args.remove(i))
         .is_some();
+    // Flame overrides: points per pixel, density estimation radius.
+    let mut flag = |name: &str| -> Result<Option<f32>, Box<dyn std::error::Error>> {
+        match args.iter().position(|a| a == name) {
+            Some(i) => {
+                args.remove(i);
+                Ok(Some(args.remove(i).parse()?))
+            }
+            None => Ok(None),
+        }
+    };
+    let quality = flag("--quality")?;
+    let smoothing = flag("--smoothing")?;
     let out = PathBuf::from(args.first().ok_or("usage: OUT [WIDTH HEIGHT SAMPLES]")?);
     let number = |i: usize, default: u32| args.get(i).map_or(Ok(default), |a| a.parse());
     let settings = StillSettings {
@@ -54,6 +67,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(path) => export::load_scene(path)?,
         None => scene::Scene::default(),
     };
+    if let Some(quality) = quality {
+        scene.flame.quality = quality;
+    }
+    if let Some(smoothing) = smoothing {
+        scene.flame.estimator_radius = smoothing;
+    }
     let library = formulas::Library::builtin()?;
     library.normalize(&mut scene.fractal);
 

@@ -332,6 +332,19 @@ fn render_settings(ui: &mut egui::Ui, flame: &mut Flame) {
     );
     ui.add(egui::Slider::new(&mut flame.gamma, 1.0..=8.0).text("Gamma"));
     ui.add(egui::Slider::new(&mut flame.vibrancy, 0.0..=1.0).text("Vibrancy"));
+    ui.add(egui::Slider::new(&mut flame.estimator_radius, 0.0..=16.0).text("Smoothing"))
+        .on_hover_text(
+            "Density estimation: blurs sparse, grainy areas by up to this many \
+         pixels while dense detail stays sharp. 0 = off.",
+        );
+    if flame.estimator_radius > 0.0 {
+        ui.add(egui::Slider::new(&mut flame.estimator_curve, 0.1..=1.5).text("Smoothing falloff"))
+            .on_hover_text("Higher: the blur fades out faster as density grows.");
+        ui.add(
+            egui::Slider::new(&mut flame.estimator_minimum, 0.0..=4.0).text("Minimum smoothing"),
+        )
+        .on_hover_text("Blur applied even in the densest areas.");
+    }
     ui.horizontal(|ui| {
         ui.color_edit_button_rgb(&mut flame.background);
         ui.label("Background");

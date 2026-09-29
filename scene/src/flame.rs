@@ -429,6 +429,14 @@ pub struct Flame {
     /// only from 3D variations, as in Apophysis 3D hack and JWildfire's
     /// default.
     pub preserve_z: bool,
+    /// Density estimation (flam3's adaptive blur): sparse areas are spread
+    /// over up to this many output pixels, smoothing grainy fringes while
+    /// dense detail stays sharp. 0 turns it off.
+    pub estimator_radius: f32,
+    /// Smallest blur radius, even in the densest areas.
+    pub estimator_minimum: f32,
+    /// How quickly the radius shrinks as density grows.
+    pub estimator_curve: f32,
 }
 
 impl Default for Flame {
@@ -456,6 +464,10 @@ impl Flame {
             vibrancy: 1.0,
             background: [0.0, 0.0, 0.0],
             preserve_z: true,
+            // flam3 / Apophysis defaults.
+            estimator_radius: 9.0,
+            estimator_minimum: 0.0,
+            estimator_curve: 0.4,
         }
     }
 

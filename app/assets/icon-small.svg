@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <radialGradient id="bg" cx="0.55" cy="0.48" r="0.75">
+      <stop offset="0" stop-color="#2d1f5e"/>
+      <stop offset="0.6" stop-color="#170f36"/>
+      <stop offset="1" stop-color="#0b0820"/>
+    </radialGradient>
+    <radialGradient id="core" cx="0.697" cy="0.462" r="0.35">
+      <stop offset="0" stop-color="#ff8ad8" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#ff8ad8" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#core)"/>
+  <g >
+    <path d="M107.99,151.95 A43.58,43.58 0 1 1 44.33,146.38 A34.86,34.86 0 1 0 107.99,151.95 Z" fill="#ffd666"/>
+    <path d="M124.96,96.16 A32.25,32.25 0 1 1 96.50,58.40 A25.80,25.80 0 1 0 124.96,96.16 Z" fill="#ffb252"/>
+    <path d="M164.04,77.87 A23.86,23.86 0 1 1 170.72,43.52 A19.09,19.09 0 1 0 164.04,77.87 Z" fill="#ff8e3f"/>
+    <path d="M193.45,90.31 A17.66,17.66 0 1 1 215.64,76.97 A14.13,14.13 0 1 0 193.45,90.31 Z" fill="#f76a57"/>
+    <path d="M201.17,112.64 A13.07,13.07 0 1 1 219.50,118.24 A10.45,10.45 0 1 0 201.17,112.64 Z" fill="#ee4774"/>
+    <path d="M192.72,127.94 A9.67,9.67 0 1 1 198.71,140.79 A7.74,7.74 0 1 0 192.72,127.94 Z" fill="#c148b5"/>
+    <path d="M180.11,130.87 A7.16,7.16 0 1 1 176.01,140.53 A5.72,5.72 0 1 0 180.11,130.87 Z" fill="#8c52ff"/>
+  </g>
+</svg>

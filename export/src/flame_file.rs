@@ -9,8 +9,9 @@
 //!   final transform if the flame has none).
 //! - Color speed: flam3's `symmetry` s means speed (1 − s) / 2; newer files
 //!   also write `color_speed` directly.
-//! - Our 3D affine terms and 3D camera go in `fractals_*` attributes, which
-//!   other programs ignore, so our own files round-trip exactly.
+//! - Our 3D affine terms and 3D camera go in `calyptra_*` attributes, which
+//!   other programs ignore, so our own files round-trip exactly. Files
+//!   written before the rename use `fractals_*`, which is still read.
 //! - Anything we cannot represent (unknown variations, more than 4
 //!   variations per transform or 12 transforms) is reported as a warning.
 
@@ -88,6 +89,15 @@ fn number64(attrs: &Attributes, key: &str) -> Option<f64> {
 
 fn number(attrs: &Attributes, key: &str) -> Option<f32> {
     attrs.get(key).and_then(|v| v.trim().parse().ok())
+}
+
+/// One of our own attributes: `calyptra_{key}`, or `fractals_{key}` from
+/// files written before the rename.
+fn ours<'a>(attrs: &'a Attributes, key: &str) -> Option<&'a str> {
+    attrs
+        .get(&format!("calyptra_{key}"))
+        .or_else(|| attrs.get(&format!("fractals_{key}")))
+        .map(String::as_str)
 }
 
 /// flam3 `coefs`/`post` order (a d b e c f) → our affine.
@@ -200,6 +210,8 @@ const XFORM_KEYS: &[&str] = &[
     "chaos",
     "plotmode",
     "visible",
+    "calyptra_z",
+    "calyptra_post_z",
     "fractals_z",
     "fractals_post_z",
     // JWildfire extras.
@@ -238,10 +250,10 @@ fn build_xform(attrs: &Attributes, label: &str, warnings: &mut Vec<String>) -> X
             ) = (xz, yz, zx, zy, zz, zc);
         }
     };
-    if let Some(z) = attrs.get("fractals_z") {
+    if let Some(z) = ours(attrs, "z") {
         apply_z(&mut xform.affine, z);
     }
-    if let (Some(z), Some(post)) = (attrs.get("fractals_post_z"), xform.post.as_mut()) {
+    if let (Some(z), Some(post)) = (ours(attrs, "post_z"), xform.post.as_mut()) {
         apply_z(post, z);
     }
     if xform.post == Some(Affine::IDENTITY) {
@@ -412,7 +424,7 @@ fn build(builder: FlameBuilder) -> ImportedFlame {
         rotation_degrees: -number64(attrs, "rotate").unwrap_or(0.0),
         ..FlameCamera::default()
     };
-    if let Some(extra) = attrs.get("fractals_camera") {
+    if let Some(extra) = ours(attrs, "camera") {
         if let [yaw, pitch, perspective, dof, focus, fade, exact_zoom] = numbers64(extra)[..] {
             // Exact: `scale` → zoom arithmetic can be off in the last bit.
             camera.zoom = exact_zoom;
@@ -446,12 +458,12 @@ fn build(builder: FlameBuilder) -> ImportedFlame {
         final_xform,
         camera,
         // Other programs' `quality` is usually a preview setting.
-        quality: match attrs.get("fractals_camera") {
+        quality: match ours(attrs, "camera") {
             Some(_) => number(attrs, "quality").map_or(400.0, |q| q.clamp(20.0, 5000.0)),
             None => 400.0,
         },
         supersample: number(attrs, "oversample").map_or(2, |s| s.clamp(1.0, 3.0) as u32),
-        brightness: number(attrs, "fractals_brightness").unwrap_or_else(|| {
+        brightness: ours(attrs, "brightness").and_then(|v| v.trim().parse().ok()).unwrap_or_else(|| {
             // Apophysis draws 4^zoom times the samples at a zoom without
             // normalizing them away, and its brightness runs hotter than
             // ours: fitted against Apophysis renders.
@@ -461,6 +473,10 @@ fn build(builder: FlameBuilder) -> ImportedFlame {
         }),
         gamma: number(attrs, "gamma").unwrap_or(4.0),
         vibrancy: number(attrs, "vibrancy").unwrap_or(1.0),
+        // flam3's density estimation (its defaults when absent).
+        estimator_radius: number(attrs, "estimator_radius").unwrap_or(9.0),
+        estimator_minimum: number(attrs, "estimator_minimum").unwrap_or(0.0),
+        estimator_curve: number(attrs, "estimator_curve").unwrap_or(0.4),
         // Apophysis 3D hack carries z through 2D variations; JWildfire only
         // with `preserve_z`.
         preserve_z: match attrs.get("preserve_z") {
@@ -559,12 +575,12 @@ fn xform_xml(out: &mut String, tag: &str, xform: &Xform, with_weight: bool) {
     }
     let _ = write!(out, " coefs=\"{}\"", coefs(&xform.affine));
     if xform.affine.is_3d() {
-        let _ = write!(out, " fractals_z=\"{}\"", z_terms(&xform.affine));
+        let _ = write!(out, " calyptra_z=\"{}\"", z_terms(&xform.affine));
     }
     if let Some(post) = &xform.post {
         let _ = write!(out, " post=\"{}\"", coefs(post));
         if post.is_3d() {
-            let _ = write!(out, " fractals_post_z=\"{}\"", z_terms(post));
+            let _ = write!(out, " calyptra_post_z=\"{}\"", z_terms(post));
         }
     }
     let _ = writeln!(out, "/>");
@@ -589,11 +605,12 @@ pub(crate) fn flame_to_xml(name: &str, flame: &Flame, gradient: &color::Gradient
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "<flame name=\"{}\" version=\"Fractals\" size=\"{width} {height}\" center=\"{} {}\" \
+        "<flame name=\"{}\" version=\"Calyptra\" size=\"{width} {height}\" center=\"{} {}\" \
          scale=\"{scale}\" rotate=\"{}\" oversample=\"{}\" quality=\"{}\" \
-         background=\"{} {} {}\" brightness=\"{}\" fractals_brightness=\"{}\" gamma=\"{}\" vibrancy=\"{}\" \
+         background=\"{} {} {}\" brightness=\"{}\" calyptra_brightness=\"{}\" gamma=\"{}\" vibrancy=\"{}\" \
+         estimator_radius=\"{}\" estimator_minimum=\"{}\" estimator_curve=\"{}\" \
          cam_pitch=\"{}\" cam_yaw=\"{}\" cam_perspective=\"{}\" cam_dof=\"{}\" preserve_z=\"{}\" \
-         fractals_camera=\"{} {} {} {} {} {} {}\">",
+         calyptra_camera=\"{} {} {} {} {} {} {}\">",
         escape(name),
         camera.center[0],
         -camera.center[1],
@@ -607,6 +624,9 @@ pub(crate) fn flame_to_xml(name: &str, flame: &Flame, gradient: &color::Gradient
         flame.brightness,
         flame.gamma,
         flame.vibrancy,
+        flame.estimator_radius,
+        flame.estimator_minimum,
+        flame.estimator_curve,
         camera.pitch_degrees.to_radians(),
         camera.yaw_degrees.to_radians(),
         camera.perspective,
@@ -724,6 +744,19 @@ mod tests {
             // The mirror applied on export is undone on import.
             assert_eq!(a.final_xform, b.final_xform, "{name}");
             assert_eq!(a.camera, b.camera, "{name}");
+        }
+    }
+
+    #[test]
+    fn files_from_before_the_rename_still_load() {
+        let gradient = color::Gradient::default();
+        for (name, flame) in scene::flame::presets() {
+            let current = flame_to_xml(name, &flame, &gradient);
+            let legacy = current.replace("calyptra_", "fractals_");
+            assert_ne!(legacy, current, "{name}");
+            let (a, b) = (parse_flames(&current).unwrap(), parse_flames(&legacy).unwrap());
+            assert_eq!(a[0].flame, b[0].flame, "{name}");
+            assert!(b[0].warnings.is_empty(), "{name}: {:?}", b[0].warnings);
         }
     }
 

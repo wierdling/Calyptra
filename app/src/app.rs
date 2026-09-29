@@ -4,6 +4,7 @@ use formulas::Library;
 use render::{FlameRenderer, RaymarchRenderer, Renderer, ToneMap, Viewport};
 use scene::{DeMode, FractalKind, RenderMode, Scene};
 
+use crate::batch_random::{BatchAction, BatchRandom};
 use crate::camera_control::{CameraController, CameraMode, NavInput};
 use crate::color_ui::{GradientEditor, coloring_ui};
 use crate::export_ui::{ExportContext, ExportDialog};
@@ -64,6 +65,7 @@ pub struct FractalApp {
     /// Back / forward through generated scenes.
     history: History,
     random_job: Option<RandomJob>,
+    batch_random: BatchRandom,
     /// GPU handles for starting background jobs from the panel.
     wgpu: Option<egui_wgpu::RenderState>,
     /// Outcome of the last random search, shown under the buttons.
@@ -137,6 +139,7 @@ impl FractalApp {
             flame_editor: FlameEditor::default(),
             history: History::default(),
             random_job: None,
+            batch_random: BatchRandom::default(),
             wgpu: None,
             random_message: None,
             flame_choices: Vec::new(),
@@ -173,7 +176,7 @@ impl FractalApp {
     }
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Fractals");
+        ui.heading("Calyptra");
         ui.horizontal(|ui| {
             let kind = &mut self.scene.kind;
             ui.selectable_value(kind, FractalKind::Distance, "3D fractal");
@@ -194,6 +197,20 @@ impl FractalApp {
                 && let Some(scene) = self.history.forward()
             {
                 self.scene = scene;
+            }
+            let what = match self.scene.kind {
+                FractalKind::Distance => "3D fractals",
+                FractalKind::Flame => "flames",
+            };
+            if ui
+                .button("▦ Batch")
+                .on_hover_text(format!(
+                    "{} random {what} in a grid, to save or pick one to edit",
+                    crate::batch_random::BATCH_SIZE
+                ))
+                .clicked()
+            {
+                self.start_batch();
             }
         });
         ui.separator();
@@ -490,6 +507,33 @@ impl FractalApp {
         }
     }
 
+    fn start_batch(&mut self) {
+        if let Some(rs) = self.wgpu.clone() {
+            let seed = self.seed();
+            self.batch_random
+                .start(&rs.device, &rs.queue, &self.scene, seed);
+        }
+    }
+
+    fn batch_random_window(&mut self, ctx: &egui::Context) {
+        match self.batch_random.ui(ctx) {
+            Some(BatchAction::Edit {
+                scene,
+                orbit_target,
+            }) => {
+                let before = self.scene.clone();
+                self.scene = *scene;
+                self.history.record(&before, &self.scene);
+                if self.scene.kind == FractalKind::Distance {
+                    self.camera_control.orbit_target = orbit_target;
+                    self.request_fit();
+                }
+            }
+            Some(BatchAction::Regenerate) => self.start_batch(),
+            None => {}
+        }
+    }
+
     /// Applies a finished random search.
     fn poll_random_job(&mut self) {
         let Some(result) = self.random_job.as_ref().and_then(RandomJob::poll) else {
@@ -538,6 +582,13 @@ impl FractalApp {
                 if ui.button("Save scene as…").clicked() {
                     self.save_scene();
                 }
+                if ui
+                    .button("Reset everything")
+                    .on_hover_text("Restore the defaults the program starts with")
+                    .clicked()
+                {
+                    self.reset_all();
+                }
                 ui.separator();
                 let label = if self.export_dialog.is_running() {
                     "Export image… (rendering)"
@@ -566,6 +617,20 @@ impl FractalApp {
                 None => {}
             }
         });
+    }
+
+    /// Restore everything to what a first launch (no saved state) starts with.
+    fn reset_all(&mut self) {
+        self.scene = Scene::default();
+        self.animation = Default::default();
+        self.timeline = Timeline::new();
+        self.camera_control = CameraController::default();
+        self.flame_editor = FlameEditor::default();
+        self.gradient_editor = GradientEditor::default();
+        self.history = History::default();
+        self.random_message = None;
+        self.flame_file_message = None;
+        self.file_message = Some(Ok("Reset to defaults".to_string()));
     }
 
     fn open_scene(&mut self) {
@@ -1036,6 +1101,7 @@ impl eframe::App for FractalApp {
             };
             self.export_dialog.ui(root.ctx(), export);
             self.flame_choice_window(root.ctx());
+            self.batch_random_window(root.ctx());
             self.movie_dialog
                 .ui(root.ctx(), &rs.device, &rs.queue, &self.animation);
         }

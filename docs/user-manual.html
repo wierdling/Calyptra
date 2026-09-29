@@ -1,0 +1,640 @@
+<title>Calyptra User Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: sticky contents rail on the left, one reading column; a palette
+   strip with gradient-stop handles (as in the app's editor) marks the header. */
+:root {
+  --bg: #f7f6fa;
+  --surface: #ffffff;
+  --fg: #1d1a2b;
+  --muted: #5d5873;
+  --line: #dcd8e6;
+  --accent: #b3306b;
+  --accent-soft: #f6e4ee;
+  --code-bg: #efedf5;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", Consolas, "Cascadia Mono", monospace;
+  --inferno: linear-gradient(90deg, #000004 0%, #320a5e 20%, #781c6d 38%, #bc3754 55%, #ed6925 72%, #fbb61a 87%, #fcffa4 100%);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14121c; --surface: #1c1928; --fg: #e9e6f2; --muted: #a39db8;
+    --line: #322d44; --accent: #f08a4b; --accent-soft: #33221f; --code-bg: #242033;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14121c; --surface: #1c1928; --fg: #e9e6f2; --muted: #a39db8;
+  --line: #322d44; --accent: #f08a4b; --accent-soft: #33221f; --code-bg: #242033;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--body); font-size: 17px; line-height: 1.6;
+  padding-inline: 16px;
+}
+.page {
+  max-width: 1120px; margin: 0 auto; padding-block: 40px 80px;
+  display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 56px;
+}
+@media (max-width: 860px) { .page { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-block: 24px 56px; } }
+
+/* Contents rail */
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-size: 15px; }
+nav.toc h2 { font-family: var(--display); font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; counter-reset: toc; }
+nav.toc li { counter-increment: toc; }
+nav.toc a {
+  display: grid; grid-template-columns: 2ch 1fr; gap: 8px; padding: 4px 8px; border-radius: 6px;
+  color: var(--fg); text-decoration: none;
+}
+nav.toc a::before { content: counter(toc); color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+nav.toc a:hover, nav.toc a:focus-visible { background: var(--accent-soft); color: var(--accent); outline: none; }
+@media (max-width: 860px) {
+  nav.toc { position: static; border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--surface); }
+  nav.toc ol { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+}
+
+/* Header */
+header.hero { margin-bottom: 40px; }
+.eyebrow { font-family: var(--mono); font-size: 13px; color: var(--muted); letter-spacing: .04em; margin: 0 0 12px; }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(40px, 7vw, 64px); line-height: 1.02; margin: 0 0 18px; letter-spacing: -.02em; text-wrap: balance; }
+.lede { font-size: 20px; color: var(--muted); max-width: 60ch; margin: 0 0 28px; }
+.palette { position: relative; max-width: 100%; }
+.palette .bar { height: 22px; border-radius: 4px; background: var(--inferno); border: 1px solid var(--line); }
+.palette .stops { position: relative; height: 12px; }
+.palette .stops span {
+  position: absolute; top: 2px; width: 0; height: 0; transform: translateX(-6px);
+  border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 10px solid var(--muted);
+}
+.palette figcaption { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+.kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin: 32px 0 0; }
+.kinds div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+.kinds strong { font-family: var(--display); font-size: 18px; display: block; margin-bottom: 4px; }
+.kinds p { margin: 0; color: var(--muted); font-size: 16px; }
+
+/* Body */
+main { min-width: 0; }
+main section { border-top: 1px solid var(--line); padding-top: 28px; margin-top: 48px; }
+h2 { font-family: var(--display); font-weight: 700; font-size: 32px; line-height: 1.15; margin: 0 0 16px; letter-spacing: -.01em; text-wrap: balance; display: flex; gap: 14px; align-items: baseline; }
+h2 .n { font-family: var(--mono); font-weight: 500; font-size: 15px; color: var(--accent); min-width: 2ch; }
+h3 { font-family: var(--display); font-weight: 500; font-size: 22px; margin: 32px 0 8px; text-wrap: balance; }
+h4 { font-family: var(--body); font-weight: 600; font-size: 17px; margin: 22px 0 6px; }
+p, ul, ol { max-width: 68ch; }
+p { margin: 0 0 14px; }
+ul, ol { padding-left: 22px; margin: 0 0 14px; }
+li { margin: 3px 0; }
+li > ul { margin: 4px 0 0; }
+strong { font-weight: 600; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+code { font-family: var(--mono); font-size: .86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 0 0 16px; max-width: 100%; }
+pre code { background: none; padding: 0; font-size: 14px; }
+kbd {
+  font-family: var(--mono); font-size: 13px; padding: 1px 7px; border-radius: 5px;
+  border: 1px solid var(--line); border-bottom-width: 2px; background: var(--surface); white-space: nowrap;
+}
+.ui { font-weight: 600; color: var(--fg); }
+
+.table-wrap { overflow-x: auto; margin: 0 0 18px; max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 16px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--display); font-weight: 500; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+td:first-child { white-space: nowrap; }
+
+.note { background: var(--accent-soft); border-radius: 8px; padding: 12px 16px; margin: 0 0 16px; max-width: 68ch; }
+.note p:last-child { margin: 0; }
+
+ol.steps { counter-reset: step; list-style: none; padding-left: 0; }
+ol.steps > li { counter-increment: step; display: grid; grid-template-columns: 28px 1fr; gap: 8px; margin: 8px 0; }
+ol.steps > li::before {
+  content: counter(step); font-family: var(--mono); font-size: 13px; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 50%; width: 24px; height: 24px; display: grid; place-items: center; margin-top: 2px;
+}
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; max-width: 72ch; padding: 0; list-style: none; }
+.chips li { margin: 0; font-family: var(--mono); font-size: 13px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+.chips-label { font-size: 14px; color: var(--muted); margin: 0 0 6px; }
+
+dl.faq { margin: 0; max-width: 68ch; }
+dl.faq dt { font-weight: 600; margin-top: 16px; }
+dl.faq dd { margin: 4px 0 0; }
+
+footer { margin-top: 64px; color: var(--muted); font-size: 14px; }
+
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+
+@media print {
+  :root, :root:not([data-theme="light"]), :root[data-theme="dark"] {
+    --bg: #fff; --surface: #fff; --fg: #1d1a2b; --muted: #5d5873; --line: #dcd8e6;
+    --accent: #b3306b; --accent-soft: #f6e4ee; --code-bg: #f3f1f7; color-scheme: light;
+    /* Chrome's PDF output garbles subsets of the JetBrains Mono web font. */
+    --mono: Consolas, "Cascadia Mono", "Courier New", monospace;
+  }
+  @page { size: A4; margin: 18mm 16mm 20mm; }
+  body { font-size: 10.5pt; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* Title page: the header first, then the contents on the same sheet. */
+  .page { display: flex; flex-direction: column; gap: 0; padding: 0; max-width: none; }
+  main { display: contents; }
+  header.hero { order: 0; }
+  nav.toc { order: 1; position: static; border: 0; padding: 0; background: none; }
+  main section, footer { order: 2; }
+  nav.toc h2 { font-size: 11pt; margin-top: 12mm; }
+  nav.toc ol { grid-template-columns: 1fr; }
+  nav.toc a { color: var(--fg); padding: 3px 0; }
+  header.hero { margin: 0; }
+  main section { page-break-before: always; border-top: 0; margin-top: 0; padding-top: 0; }
+  h2, h3, h4 { page-break-after: avoid; }
+  pre, table, .note, dl.faq dt { page-break-inside: avoid; }
+  p, ul, ol { max-width: none; }
+  a { text-decoration: none; }
+  footer { display: none; }
+}
+</style>
+
+<div class="page">
+  <nav class="toc" aria-label="Contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#getting-started">Getting started</a></li>
+      <li><a href="#window">The window</a></li>
+      <li><a href="#fractals-3d">3D fractals</a></li>
+      <li><a href="#flames">Flames</a></li>
+      <li><a href="#color">Color and palettes</a></li>
+      <li><a href="#random">Random, Mutate, Batch, History</a></li>
+      <li><a href="#scenes">Scene files</a></li>
+      <li><a href="#export">Exporting images</a></li>
+      <li><a href="#animation">Animation and movies</a></li>
+      <li><a href="#formulas">Custom formulas</a></li>
+      <li><a href="#cli">Command-line rendering</a></li>
+      <li><a href="#tips">Tips and troubleshooting</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <p class="eyebrow">User manual · Windows · wgpu + egui</p>
+      <h1>Calyptra</h1>
+      <p class="lede">A desktop program for exploring 3D fractals and fractal flames, coloring them, and rendering them to high-resolution images and movies.</p>
+      <figure class="palette" aria-hidden="true" style="margin:0">
+        <div class="bar"></div>
+        <div class="stops">
+          <span style="left:0%"></span><span style="left:20%"></span><span style="left:38%"></span><span style="left:55%"></span><span style="left:72%"></span><span style="left:87%"></span><span style="left:100%"></span>
+        </div>
+        <figcaption>Inferno · 7 stops · OKLab interpolation</figcaption>
+      </figure>
+      <div class="kinds">
+        <div><strong>3D fractals</strong><p>Distance-estimated shapes like the Mandelbulb and Mandelbox. Fly around them like a landscape and light them like a photograph.</p></div>
+        <div><strong>Flames</strong><p>Fractal flames in the style of Apophysis and JWildfire, built from weighted transforms, flat or with depth.</p></div>
+      </div>
+      <p style="margin-top:20px">Both kinds share the same color tools, animation timeline, image export and movie rendering.</p>
+    </header>
+
+    <!-- 1 -->
+    <section id="getting-started">
+      <h2><span class="n">1</span>Getting started</h2>
+      <h3>Requirements</h3>
+      <ul>
+        <li>Windows 10 or 11 with a GPU that supports Direct3D 12 or Vulkan. Integrated graphics (e.g. Intel Iris Xe) is fine.</li>
+        <li>To render movies: <strong>ffmpeg</strong>, installed with <code>winget install ffmpeg</code>. Not needed for still images or PNG frame sequences.</li>
+      </ul>
+      <h3>Building and running</h3>
+      <p>From the source folder:</p>
+      <pre><code>cargo run --release -p calyptra</code></pre>
+      <p>Always use <code>--release</code> for real work; debug builds are much slower.</p>
+      <h3>First launch</h3>
+      <p>The program opens on a Mandelbulb. Try:</p>
+      <ol class="steps">
+        <li><span><strong>Left-drag</strong> in the view to orbit around it, and scroll to zoom.</span></li>
+        <li><span>Click <span class="ui">🎲 Random</span> in the <em>Fractal</em> section for a new random fractal.</span></li>
+        <li><span>Pick a palette from <span class="ui">Load palette…</span> in the <em>Color</em> section.</span></li>
+        <li><span><span class="ui">File → Export image…</span> to save a high-resolution picture.</span></li>
+      </ol>
+      <p>The program remembers your current scene and animation when you close it. <span class="ui">File → Reset everything</span> returns to the first-launch defaults.</p>
+    </section>
+
+    <!-- 2 -->
+    <section id="window">
+      <h2><span class="n">2</span>The window</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Area</th><th>What it holds</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Menu bar</strong> (top)</td><td>File menu: open/save scenes, reset, export image, render movie. Status messages from file operations appear to the right.</td></tr>
+          <tr><td><strong>Side panel</strong> (left)</td><td>The <em>3D fractal / Flame</em> switch, history arrows (◀ ▶), <span class="ui">▦ Batch</span>, and collapsible sections of settings.</td></tr>
+          <tr><td><strong>Viewport</strong> (center)</td><td>The live render. Navigate with the mouse and keyboard.</td></tr>
+          <tr><td><strong>Timeline</strong> (bottom)</td><td>Playback, keyframes and the <span class="ui">🎬 Render movie…</span> button.</td></tr>
+        </tbody>
+      </table></div>
+      <p>The side panel shows different sections depending on the mode:</p>
+      <ul>
+        <li><strong>3D fractal:</strong> Camera, Fractal, Custom formulas, Color, Lighting, Render, Quality, Display, Performance.</li>
+        <li><strong>Flame:</strong> Flame, Color, Display, Performance.</li>
+      </ul>
+      <h3>How the view renders</h3>
+      <p>While you move the camera, the view renders at reduced resolution so it stays responsive. About 150&nbsp;ms after you stop, it switches to full resolution and keeps refining (anti-aliasing, path tracing, or flame samples) until it reaches its target. You don't need to wait for it to finish before doing something else.</p>
+    </section>
+
+    <!-- 3 -->
+    <section id="fractals-3d">
+      <h2><span class="n">3</span>3D fractals</h2>
+      <p>Select <span class="ui">3D fractal</span> at the top of the side panel.</p>
+
+      <h3>3.1 Camera and navigation</h3>
+      <p>The <strong>Camera</strong> section has two navigation modes.</p>
+      <h4>Orbit (default): the camera circles a pivot point</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Input</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td>Left-drag</td><td>Orbit around the pivot</td></tr>
+          <tr><td>Right-drag or middle-drag</td><td>Pan</td></tr>
+          <tr><td>Mouse wheel</td><td>Zoom in / out</td></tr>
+        </tbody>
+      </table></div>
+      <h4>Fly: free flight, for going deep into detail</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Input</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td>Drag</td><td>Look around</td></tr>
+          <tr><td><kbd>W</kbd> / <kbd>S</kbd></td><td>Forward / back</td></tr>
+          <tr><td><kbd>A</kbd> / <kbd>D</kbd></td><td>Left / right</td></tr>
+          <tr><td><kbd>R</kbd> / <kbd>F</kbd></td><td>Up / down</td></tr>
+          <tr><td><kbd>Q</kbd> / <kbd>E</kbd></td><td>Roll</td></tr>
+          <tr><td><kbd>Shift</kbd></td><td>Move 4× faster</td></tr>
+          <tr><td>Mouse wheel</td><td>Change fly speed</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><p>Fly speed scales with your distance to the nearest surface, so you slow down automatically as you get close. That's what lets you zoom into detail at any depth. The keys only work while the mouse is over the view.</p></div>
+      <p>Switching back to Orbit pivots around whatever is in the center of the view.</p>
+      <p>Other camera controls:</p>
+      <ul>
+        <li><strong>Field of view</strong>: 10°–120°.</li>
+        <li><strong>Position</strong> and <strong>Surface distance</strong>: read-only; the distance to the surface under the crosshair.</li>
+        <li><strong>Aperture</strong>: depth of field, used by the path tracer. 0 keeps everything sharp.</li>
+        <li><strong>focus</strong> and <span class="ui">Focus at center</span>: the focus distance; the button sets it to whatever is under the center of the view.</li>
+        <li><span class="ui">Reset camera</span>.</li>
+      </ul>
+
+      <h3>3.2 Fractal</h3>
+      <p><span class="ui">Load preset…</span> loads a ready-made fractal with a suitable camera:</p>
+      <ul class="chips">
+        <li>Mandelbulb</li><li>Juliabulb</li><li>Mandelbox</li><li>Menger sponge</li><li>KIFS octahedron</li><li>Amazing Surf</li><li>Hybrid: Mandelbulb + Mandelbox</li><li>Quaternion Julia</li><li>Pseudo-Kleinian</li>
+      </ul>
+      <h4>Formulas and hybrids</h4>
+      <p>A fractal is a list of up to 8 <strong>formula slots</strong>, applied in order on each iteration. One slot is a plain fractal; two or more make a <em>hybrid</em>. Each slot shows:</p>
+      <ul>
+        <li>its number and a <strong>formula</strong> dropdown (built-in and custom formulas);</li>
+        <li><strong>×N</strong>: how many times in a row this formula runs before moving on;</li>
+        <li><strong>⏶ ⏷</strong> to reorder, <strong>🗑</strong> to remove;</li>
+        <li>sliders for the formula's parameters. You can type values outside a slider's range.</li>
+      </ul>
+      <p><span class="ui">+ Add formula</span> appends a new slot (a copy of the last formula).</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Built-in formula</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Mandelbulb</td><td>Power formula; the classic 3D Mandelbrot.</td></tr>
+          <tr><td>Mandelbox</td><td>Box and sphere folds.</td></tr>
+          <tr><td>Menger sponge</td><td>Cube-based IFS.</td></tr>
+          <tr><td>KIFS octahedron</td><td>Kaleidoscopic IFS with rotation.</td></tr>
+          <tr><td>Amazing Surf</td><td>Folding formula with surf-like forms.</td></tr>
+          <tr><td>Quaternion Julia</td><td>4D formula; a parameter picks the 3D slice.</td></tr>
+          <tr><td>Pseudo-Kleinian</td><td>Kleinian-group-like structures (custom distance estimate).</td></tr>
+        </tbody>
+      </table></div>
+      <h4>Other fractal settings</h4>
+      <ul>
+        <li><strong>Iterations</strong>: more gives finer detail and slower rendering.</li>
+        <li><strong>Bailout</strong>: escape radius.</li>
+        <li><strong>Distance estimate</strong>: how distance to the surface is computed. <strong>Auto</strong> picks the right one for the formulas; override it (Logarithmic, Linear, Box, Custom) if a hybrid renders with holes or blobs.</li>
+        <li><strong>Julia mode</strong>: uses a fixed constant <strong>c</strong> (three values) instead of the sample position. This gives Juliabulbs and similar shapes.</li>
+      </ul>
+      <p>Composition or shader errors appear in red at the top of this section.</p>
+
+      <h3>3.3 Lighting</h3>
+      <ul>
+        <li><strong>Key light</strong>: Azimuth, Elevation, color, Intensity; <strong>Soft shadows</strong> and <strong>Shadow sharpness</strong>.</li>
+        <li><strong>Surface</strong>: Ambient, Ambient occlusion, Specular, Shininess.</li>
+        <li><strong>Atmosphere</strong>: Background (top / bottom gradient colors), Fog, Glow color and strength, Glow radius.</li>
+        <li><span class="ui">Reset lighting</span>.</li>
+      </ul>
+
+      <h3>3.4 Render: Preview vs. Path trace</h3>
+      <ul>
+        <li><strong>Preview</strong>: fast direct lighting. When idle, it gathers 16 samples for anti-aliasing. Best for exploring.</li>
+        <li><strong>Path trace</strong>: physically based global illumination with soft sun shadows, sky light, glossy reflections and depth of field. It converges over time; the progress bar shows samples done out of the target.
+          <ul>
+            <li><strong>Bounces</strong>: light bounces (1–8).</li>
+            <li><strong>Target samples</strong>: how far the view keeps refining (16–4096).</li>
+            <li><strong>Sun size</strong>: larger means softer shadows.</li>
+            <li><strong>Denoise</strong> / <strong>Denoise strength</strong>: cleans up noise so you need fewer samples. It keeps fractal color detail sharp.</li>
+          </ul>
+        </li>
+      </ul>
+      <p>While you navigate, the view always uses the fast preview; path tracing resumes once the camera settles. Changes to exposure, tone mapping and denoising apply without restarting the accumulated image.</p>
+
+      <h3>3.5 Quality</h3>
+      <ul>
+        <li><strong>Max steps</strong>: raymarching steps per pixel. Raise it if distant parts disappear.</li>
+        <li><strong>Detail (px)</strong>: surface precision in pixels. Smaller means finer detail and slower rendering.</li>
+        <li><strong>Step factor</strong>: below 1 makes steps more cautious. Lower it if you see banding, holes or overstepping artifacts, which is common with hybrids.</li>
+        <li><strong>Max distance</strong>: how far rays travel.</li>
+        <li><strong>Resolution scale</strong>: render resolution relative to the window. Below 1 is faster; above 1 supersamples.</li>
+        <li><strong>Resolution while moving</strong>: the scale used during navigation.</li>
+      </ul>
+
+      <h3>3.6 Display</h3>
+      <ul>
+        <li><strong>Exposure (EV)</strong>: brightness, −5 to +5.</li>
+        <li><strong>Tone map</strong>: ACES, AgX (gentler highlights) or Clamp.</li>
+        <li><strong>Dither</strong>: prevents banding in smooth gradients.</li>
+      </ul>
+
+      <h3>3.7 Performance</h3>
+      <p>Shows your GPU, the render size, and GPU time per frame. Use it to judge the effect of quality settings.</p>
+    </section>
+
+    <!-- 4 -->
+    <section id="flames">
+      <h2><span class="n">4</span>Flames</h2>
+      <p>Select <span class="ui">Flame</span> at the top of the side panel.</p>
+
+      <h3>4.1 Creating a flame</h3>
+      <p>In the <strong>Flame</strong> section:</p>
+      <ul>
+        <li><span class="ui">Presets…</span>: Swirl galaxy, Golden swirl, Electric web, Nebula, 3D plume, Fire feather, Julian bloom, Sierpinski triangle.</li>
+        <li><span class="ui">🎲 Random</span>: a new random 2D flame.</li>
+        <li><span class="ui">🎲 Random 3D</span>: a random flame with depth (tilted transforms, 3D variations, perspective).</li>
+        <li><span class="ui">Mutate</span>: nudges the current flame's transforms slightly.</li>
+        <li><span class="ui">Import .flame…</span> / <span class="ui">Export .flame…</span>: see <a href="#flame-files">4.5</a>.</li>
+      </ul>
+
+      <h3>4.2 Navigating</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Input</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td>Left-drag</td><td>Pan</td></tr>
+          <tr><td>Right-drag</td><td>Orbit (tilt and turn a 3D flame)</td></tr>
+          <tr><td>Mouse wheel</td><td>Zoom</td></tr>
+        </tbody>
+      </table></div>
+      <p>The view keeps adding samples after you stop moving, so it gets smoother over a few seconds.</p>
+
+      <h3>4.3 Transforms</h3>
+      <p>A flame is a set of up to 12 <strong>transforms</strong>. Each is listed by its variations (e.g. <code>1. spherical + swirl</code>). Click one to edit it.</p>
+      <ul>
+        <li><span class="ui">+ Add</span>, <span class="ui">Duplicate</span>, <span class="ui">🗑</span> (delete).</li>
+        <li><strong>Final</strong>: adds a final transform, applied to every plotted point. Useful for warping the whole image.</li>
+      </ul>
+      <p>For the selected transform:</p>
+      <ul>
+        <li><strong>Weight</strong>: how often it is chosen. Heavier transforms dominate.</li>
+        <li><strong>Color</strong>: its position on the palette (0–1).</li>
+        <li><strong>Color speed</strong>: how fast points take on this transform's color.</li>
+        <li><strong>Affine</strong>: a 3×4 grid. Rows are x′, y′, z′; columns multiply x, y, z, plus an offset. The z row and column give a flame depth; leave them at identity for a flat flame. Quick buttons: <span class="ui">⟲ 15°</span> / <span class="ui">⟳ 15°</span> rotate, <span class="ui">×1.1</span> / <span class="ui">×0.9</span> scale, <span class="ui">Reset</span>.</li>
+        <li><strong>Post transform</strong>: an optional second affine applied after the variations.</li>
+        <li><strong>Variations</strong>: up to 4 per transform. Each has a type, a weight (<strong>w</strong>), and parameters for types that take them. <span class="ui">+ Variation</span> adds one.</li>
+      </ul>
+      <p class="chips-label">2D variations</p>
+      <ul class="chips">
+        <li>linear</li><li>sinusoidal</li><li>spherical</li><li>swirl</li><li>horseshoe</li><li>polar</li><li>handkerchief</li><li>heart</li><li>disc</li><li>spiral</li><li>hyperbolic</li><li>diamond</li><li>ex</li><li>julia</li><li>bent</li><li>fisheye</li><li>exponential</li><li>power</li><li>cosine</li><li>eyefish</li><li>bubble</li><li>cylinder</li><li>tangent</li><li>cross</li><li>blur</li><li>julian</li><li>curl</li><li>pdj</li>
+      </ul>
+      <p class="chips-label">3D variations</p>
+      <ul class="chips">
+        <li>linear3D</li><li>spherical3D</li><li>sinusoidal3D</li><li>blur3D</li><li>julia3D</li><li>hemisphere</li>
+      </ul>
+      <p class="chips-label">Depth helpers</p>
+      <ul class="chips">
+        <li>separation</li><li>zcone</li><li>ztranslate</li><li>zscale</li><li>pre_blur</li>
+      </ul>
+
+      <h3>4.4 Flame render settings</h3>
+      <ul>
+        <li><strong>Quality (points/pixel)</strong>: higher is smoother and slower. Low values are fine for exploring; raise it for final exports.</li>
+        <li><strong>Supersample</strong>: 1–3× internal resolution. Sharper, uses more memory.</li>
+        <li><strong>Brightness</strong>, <strong>Gamma</strong>, <strong>Vibrancy</strong>: tone controls. Vibrancy keeps colors saturated in bright areas.</li>
+        <li><strong>Smoothing</strong>: density estimation. It blurs sparse, grainy areas while dense detail stays sharp. 0 turns it off. When on, <strong>Smoothing falloff</strong> and <strong>Minimum smoothing</strong> tune it.</li>
+        <li><strong>Background</strong> color.</li>
+        <li><strong>zoom</strong>, rotation (°) and <span class="ui">Reset view</span>.</li>
+        <li><strong>3D view</strong>: Yaw, Pitch, Perspective, Depth of field, Focus depth, Depth fade. These only matter for flames with depth.</li>
+      </ul>
+      <p>Tone changes (brightness, gamma, vibrancy, background, smoothing, quality) are applied to the existing image without starting over.</p>
+
+      <h3 id="flame-files">4.5 .flame files</h3>
+      <p><span class="ui">Import .flame…</span> reads <code>.flame</code>, <code>.flam3</code> and <code>.xml</code> files from Apophysis (including the 3D hack), JWildfire and flam3. If a file holds several flames, a window lists them; pick one. The palette is imported with the flame.</p>
+      <p>If something in the file isn't supported (an unknown variation, more than 4 variations per transform, more than 12 transforms), the flame is still imported. The approximations are listed under the buttons, and marked ⚠ in the picker.</p>
+      <p>The file's <code>quality</code> setting is ignored, since it's usually a preview value. Set quality in the program or in the export.</p>
+      <p><span class="ui">Export .flame…</span> writes flam3 XML that other programs can open. Files exported from this program reopen exactly, including the 3D settings.</p>
+    </section>
+
+    <!-- 5 -->
+    <section id="color">
+      <h2><span class="n">5</span>Color and palettes</h2>
+      <p>The <strong>Color</strong> section appears in both modes.</p>
+      <h3>Palettes</h3>
+      <p><span class="ui">Load palette…</span> lists 15 built-in palettes with previews:</p>
+      <ul class="chips">
+        <li>Bronze</li><li>Electric</li><li>Fire</li><li>Gold</li><li>Grayscale</li><li>Ice</li><li>Inferno</li><li>Jade</li><li>Magma</li><li>Ocean</li><li>Pastel</li><li>Spectrum</li><li>Sunset</li><li>Turbo</li><li>Viridis</li>
+      </ul>
+      <h3>Gradient editor</h3>
+      <p>The bar under the menu is the current gradient. Triangles below it are color stops.</p>
+      <ul>
+        <li><strong>Double-click the bar</strong> to add a stop.</li>
+        <li><strong>Click or drag a triangle</strong> to select or move a stop.</li>
+        <li>For the selected stop: color picker, position (<strong>at</strong>), hex code, and <strong>🗑</strong> to delete (a gradient keeps at least two stops).</li>
+        <li><span class="ui">Reverse</span>, <span class="ui">Even spacing</span>.</li>
+        <li><span class="ui">Import…</span>: Fractint <code>.map</code>, GIMP <code>.ggr</code> or Ultra Fractal <code>.ugr</code> palettes.</li>
+      </ul>
+      <p>Colors blend perceptually (OKLab), so gradients stay smooth without muddy midpoints.</p>
+      <h3>Coloring 3D fractals</h3>
+      <p>These controls appear only for 3D fractals. Flames get their colors from each transform's <strong>Color</strong> value.</p>
+      <ul>
+        <li><strong>Color source</strong>: what value picks the gradient color:
+          <ul>
+            <li><em>Orbit trap (point)</em> and <em>Orbit trap (planes)</em>: how close the iteration came to a point or planes. Gives the classic banded, cellular looks.</li>
+            <li><em>Iterations</em>: smoothed iteration count.</li>
+            <li><em>Height</em>: vertical position.</li>
+            <li><em>Surface normal</em>: facing direction.</li>
+          </ul>
+        </li>
+        <li><span class="ui">Fit to view</span>: stretches the gradient over the range of values visible now. It runs automatically when you change the source, load a preset, or generate a random fractal. Press it again after moving somewhere very different.</li>
+        <li><strong>Offset</strong>: shifts colors along the gradient.</li>
+        <li><strong>Frequency</strong>: how many times the gradient repeats.</li>
+        <li><strong>Wrap</strong>: Repeat, Mirror or Clamp. Palettes that don't loop switch to Mirror automatically to avoid a visible seam.</li>
+      </ul>
+    </section>
+
+    <!-- 6 -->
+    <section id="random">
+      <h2><span class="n">6</span>Random, Mutate, Batch and History</h2>
+      <h3>Random</h3>
+      <ul>
+        <li><strong>3D:</strong> <span class="ui">🎲 Random</span> (in <em>Fractal</em>) builds a single or hybrid fractal, tests candidates until one is neither empty nor a shapeless blob, frames it, and picks a palette and color source. Your lighting and render settings are kept. The formulas used are shown under the button; if no candidate passed, the best one is shown with a note. <span class="ui">Cancel</span> stops the search.</li>
+        <li><strong>Flame:</strong> <span class="ui">🎲 Random</span> and <span class="ui">🎲 Random 3D</span> (in <em>Flame</em>).</li>
+      </ul>
+      <h3>Mutate</h3>
+      <p><span class="ui">Mutate</span> makes small changes to the current fractal or flame. Press it repeatedly to explore variations of something you like.</p>
+      <h3>Batch</h3>
+      <p><span class="ui">▦ Batch</span> (top of the side panel) opens a window that generates 20 random fractals or flames (depending on the current mode) as thumbnails, using your current settings.</p>
+      <ul>
+        <li><strong>Double-click</strong> a thumbnail, or click <span class="ui">Edit</span>, to load it into the main view. It's outlined in the grid.</li>
+        <li><span class="ui">Save…</span> saves that one as a scene file.</li>
+        <li><span class="ui">🎲 Generate again</span> makes a new batch; <span class="ui">Stop</span> stops the current one.</li>
+      </ul>
+      <h3>History (◀ ▶)</h3>
+      <p>The arrows next to the mode switch step back and forward through results of Random, Mutate, presets, batch picks and flame imports (the last 50). Edits you made to a result are kept: go back, then forward, and your tweaked version returns. Generating something new after going back discards the forward entries.</p>
+    </section>
+
+    <!-- 7 -->
+    <section id="scenes">
+      <h2><span class="n">7</span>Scene files</h2>
+      <p>A <strong>scene</strong> is everything about the current picture: mode, fractal or flame, camera, colors, lighting and render settings. It also includes the animation, if you have keyframes.</p>
+      <ul>
+        <li><span class="ui">File → Save scene as…</span> writes a readable <code>.json</code> file.</li>
+        <li><span class="ui">File → Open scene…</span> opens a <code>.json</code> scene, <strong>or a PNG exported by this program</strong>.</li>
+        <li><span class="ui">File → Reset everything</span> restores the defaults.</li>
+      </ul>
+      <div class="note"><p>Every exported PNG has its scene embedded, so any image you've rendered can be reopened and continued.</p></div>
+    </section>
+
+    <!-- 8 -->
+    <section id="export">
+      <h2><span class="n">8</span>Exporting images</h2>
+      <p><span class="ui">File → Export image…</span> opens the export window.</p>
+      <ul>
+        <li><strong>Size</strong>: width × height in pixels (up to 16384), with <strong>Presets</strong> (HD, Full HD, QHD, 4K, 8K, Square, Portrait) and <span class="ui">Match viewport aspect</span>.</li>
+        <li><strong>Anti-aliasing</strong>: samples per pixel, from Off to 100. For path-traced scenes this is also the number of path samples; 16–64 with denoising is a good range. For flames, quality comes mainly from the flame's <strong>Quality</strong> setting.</li>
+        <li><strong>Estimated time</strong> is based on how fast the viewport currently renders.</li>
+      </ul>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Format</th><th>Use it for</th></tr></thead>
+        <tbody>
+          <tr><td>PNG (8-bit)</td><td>Dithered, smallest files.</td></tr>
+          <tr><td>PNG (16-bit)</td><td>The default; best for further editing.</td></tr>
+          <tr><td>OpenEXR (linear HDR)</td><td>Raw linear light for compositing and grading.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Click <span class="ui">Render and save…</span>, choose a file, and the render runs in the background with a progress bar and time remaining. You can keep working meanwhile. <span class="ui">Cancel</span> stops it.</p>
+      <p>Exports use the same settings as the viewport (render mode, denoise, exposure, tone map), rendered at full size.</p>
+    </section>
+
+    <!-- 9 -->
+    <section id="animation">
+      <h2><span class="n">9</span>Animation and movies</h2>
+      <h3>Keyframes</h3>
+      <p>Every setting can be animated: camera, formula parameters, colors, lighting, flame transforms. A keyframe is a snapshot of the whole scene.</p>
+      <p>The <strong>timeline</strong> at the bottom:</p>
+      <ul>
+        <li><strong>⏮ ▶/⏸ ⏭</strong>: go to start, play/pause, go to end.</li>
+        <li>Current time and frame number.</li>
+        <li><strong>length</strong> (seconds) and <strong>fps</strong>.</li>
+        <li><strong>Loop</strong> and <strong>Show path</strong> (draws the camera path over the view: a line, with dots at keyframe positions).</li>
+        <li><span class="ui">+ Add key</span>: stores the current scene as a keyframe at the playhead.</li>
+        <li>With a key selected:
+          <ul>
+            <li><span class="ui">Update key</span>: replaces the key with the current scene. It shows <strong>●</strong> when you've changed the scene since the key was made.</li>
+            <li><strong>Easing</strong>: timing from this key to the next (Smooth, Ease in, Ease out, Ease in/out).</li>
+            <li><strong>🗑</strong>: delete the key.</li>
+          </ul>
+        </li>
+        <li>The track below: click or drag on empty space to scrub; click a ◆ to select a key and jump to it; drag a ◆ to move it in time.</li>
+      </ul>
+      <h4>A typical workflow</h4>
+      <ol class="steps">
+        <li><span>Set up the first view and click <span class="ui">+ Add key</span>.</span></li>
+        <li><span>Move the playhead later, change the view or parameters, and click <span class="ui">+ Add key</span> again.</span></li>
+        <li><span>Press ▶ to preview. Playback uses the fast preview renderer.</span></li>
+        <li><span>To fix a key, click it, adjust, and press <span class="ui">Update key</span>.</span></li>
+      </ol>
+      <p>The camera moves along smooth curves through the keyframes. Numeric values interpolate smoothly; on/off settings and formula choices switch when the next key is reached.</p>
+
+      <h3>Rendering a movie</h3>
+      <p>Click <span class="ui">🎬 Render movie…</span> (timeline) or <span class="ui">File → Render movie…</span>.</p>
+      <ul>
+        <li>The top line shows keyframes, length, fps and total frame count.</li>
+        <li><strong>Size</strong> with presets (720p to 4K, square, vertical).</li>
+        <li><strong>Samples</strong>: per pixel per frame (1–256).</li>
+        <li><strong>ffmpeg</strong>: the command or full path. The detected version is shown below; if it isn't found, install it with <code>winget install ffmpeg</code> or enter the full path to <code>ffmpeg.exe</code>.</li>
+      </ul>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Format</th><th>Use it for</th></tr></thead>
+        <tbody>
+          <tr><td>H.264 MP4</td><td>Plays everywhere.</td></tr>
+          <tr><td>H.265 MP4</td><td>Smaller files, 10-bit color.</td></tr>
+          <tr><td>ProRes 422 HQ MOV</td><td>Video editing.</td></tr>
+          <tr><td>PNG frames only</td><td>No ffmpeg needed.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Click <span class="ui">Render…</span> and choose the output file. Frames are rendered as 16-bit PNGs into a folder next to it (<code>&lt;name&gt;_frames</code>), then encoded.</p>
+      <div class="note"><p><strong>Renders resume.</strong> If you cancel or close the program, render again to the same file: finished frames are reused and only the missing ones render.</p></div>
+    </section>
+
+    <!-- 10 -->
+    <section id="formulas">
+      <h2><span class="n">10</span>Custom formulas</h2>
+      <p>You can write your own 3D formulas in WGSL, the shader language used by the program. They live in <code>%APPDATA%\Calyptra\formulas</code>.</p>
+      <p>In the <strong>Custom formulas</strong> section:</p>
+      <ul>
+        <li><span class="ui">Open folder</span> opens that folder in Explorer.</li>
+        <li>Type a name and click <span class="ui">New formula</span>. This creates a documented starter file and opens it in your editor. Then pick it in a formula slot.</li>
+        <li>Your formulas are listed with <span class="ui">Edit</span> buttons.</li>
+      </ul>
+      <p>Saving a file updates the view immediately. If a formula has an error, the section title shows <strong>⚠</strong> with a count, and the error is listed with its file, line and column. Only the broken formula is disabled; fix it and save.</p>
+      <p>The file format is described in <code>docs/custom-formulas.md</code> in the source tree.</p>
+    </section>
+
+    <!-- 11 -->
+    <section id="cli">
+      <h2><span class="n">11</span>Command-line rendering</h2>
+      <p>Stills and movies can also be rendered without the window, which is useful for batch jobs.</p>
+      <h3>Still image</h3>
+      <pre><code>cargo run --release -p export --example export_still -- out.png 3840 2160 16 --scene my_scene.json</code></pre>
+      <ul>
+        <li>Arguments: output file (<code>.png</code> or <code>.exr</code>), then width, height and samples (default 1920 × 1080, 16).</li>
+        <li><code>--scene</code> accepts a scene <code>.json</code>, an exported <code>.png</code>, or a <code>.flame</code> file.</li>
+        <li><code>--png8</code> for 8-bit PNG.</li>
+        <li>Flames: <code>--quality N</code> (points per pixel) and <code>--smoothing R</code>.</li>
+      </ul>
+      <h3>Movie</h3>
+      <pre><code>cargo run --release -p export --example export_movie -- out.mp4 1920 1080 16 --project my_scene.json</code></pre>
+      <p>The scene file must contain keyframes (save it with <span class="ui">Save scene as…</span> after adding them). Without <code>--project</code> it renders a short demo.</p>
+    </section>
+
+    <!-- 12 -->
+    <section id="tips">
+      <h2><span class="n">12</span>Tips and troubleshooting</h2>
+      <dl class="faq">
+        <dt>The view is slow or choppy.</dt>
+        <dd>Lower <strong>Resolution scale</strong> or <strong>Resolution while moving</strong> (Quality), reduce <strong>Iterations</strong> or <strong>Max steps</strong>, or switch from Path trace to Preview while exploring.</dd>
+        <dt>Holes, speckles or missing pieces in a 3D fractal.</dt>
+        <dd>Lower <strong>Step factor</strong>, raise <strong>Max steps</strong>, or try a different <strong>Distance estimate</strong> mode. Hybrids especially benefit from a step factor of 0.5–0.7.</dd>
+        <dt>The surface looks blurry up close.</dt>
+        <dd>Lower <strong>Detail (px)</strong> and raise <strong>Iterations</strong>.</dd>
+        <dt>Colors are all one shade.</dt>
+        <dd>Press <span class="ui">Fit to view</span>, or try a different <strong>Color source</strong>.</dd>
+        <dt>The path-traced image is noisy.</dt>
+        <dd>Raise <strong>Target samples</strong>, enable <strong>Denoise</strong>, or make the sun larger (softer shadows converge faster).</dd>
+        <dt>A flame looks grainy.</dt>
+        <dd>Wait for it to refine, raise <strong>Quality</strong>, or increase <strong>Smoothing</strong>.</dd>
+        <dt>A flame is too dark or washed out.</dt>
+        <dd>Adjust <strong>Brightness</strong> and <strong>Gamma</strong>; lower <strong>Vibrancy</strong> if bright areas look oversaturated.</dd>
+        <dt>An imported flame looks different from Apophysis or JWildfire.</dt>
+        <dd>Check the warnings under the import buttons; unsupported variations are approximated.</dd>
+        <dt>"ffmpeg not found."</dt>
+        <dd>Run <code>winget install ffmpeg</code>, restart the program, or enter the full path to <code>ffmpeg.exe</code> in the movie window. You can always choose <em>PNG frames only</em> and encode separately.</dd>
+        <dt>I lost a good random result.</dt>
+        <dd>Use ◀ to step back through History.</dd>
+        <dt>Something is in a weird state.</dt>
+        <dd><span class="ui">File → Reset everything</span>.</dd>
+      </dl>
+    </section>
+
+    <footer>Calyptra user manual · generated from <code>docs/USER_MANUAL.md</code></footer>
+  </main>
+</div>

@@ -1,5 +1,5 @@
 [package]
-name = "fractals"
+name = "calyptra"
 edition.workspace = true
 version.workspace = true
 
@@ -19,3 +19,6 @@ color = { path = "../color" }
 formulas = { path = "../formulas" }
 export = { path = "../export" }
 rfd = "0.17"
+
+[build-dependencies]
+embed-resource = "3"

@@ -78,7 +78,7 @@ fn write_png(
         .add_itxt_chunk(PNG_SCENE_KEY.to_owned(), scene_to_json(scene)?)
         .map_err(png_err)?;
     encoder
-        .add_text_chunk("Software".to_owned(), "Fractals".to_owned())
+        .add_text_chunk("Software".to_owned(), "Calyptra".to_owned())
         .map_err(png_err)?;
     let mut writer = encoder.write_header().map_err(png_err)?;
 
@@ -157,7 +157,7 @@ mod tests {
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
-            "fractals-export-test-{}-{name}",
+            "calyptra-export-test-{}-{name}",
             std::process::id()
         ))
     }

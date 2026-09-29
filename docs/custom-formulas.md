@@ -1,6 +1,6 @@
 # Custom formulas
 
-Custom formulas are WGSL files in `%APPDATA%\Fractals\formulas`. The app
+Custom formulas are WGSL files in `%APPDATA%\Calyptra\formulas`. The app
 watches the folder: save a file and the view updates. The quickest start is
 **Custom formulas → New formula** in the side panel, which writes a documented
 starter file and opens it.

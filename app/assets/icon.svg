@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <radialGradient id="bg" cx="0.55" cy="0.48" r="0.75">
+      <stop offset="0" stop-color="#2d1f5e"/>
+      <stop offset="0.6" stop-color="#170f36"/>
+      <stop offset="1" stop-color="#0b0820"/>
+    </radialGradient>
+    <radialGradient id="core" cx="0.661" cy="0.474" r="0.35">
+      <stop offset="0" stop-color="#ff8ad8" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#ff8ad8" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#core)"/>
+  <g filter="url(#glow)">
+    <path d="M107.01,151.35 A38.56,38.56 0 1 1 50.68,146.43 A30.85,30.85 0 1 0 107.01,151.35 Z" fill="#ffd666"/>
+    <path d="M113.57,111.26 A31.62,31.62 0 1 1 78.58,80.84 A25.29,25.29 0 1 0 113.57,111.26 Z" fill="#ffc55d"/>
+    <path d="M137.25,87.82 A25.93,25.93 0 1 1 128.70,50.78 A20.74,20.74 0 1 0 137.25,87.82 Z" fill="#ffb554"/>
+    <path d="M164.25,83.69 A21.26,21.26 0 1 1 176.44,54.99 A17.01,17.01 0 1 0 164.25,83.69 Z" fill="#ffa44b"/>
+    <path d="M184.16,93.96 A17.43,17.43 0 1 1 206.07,80.80 A13.95,13.95 0 1 0 184.16,93.96 Z" fill="#ff9342"/>
+    <path d="M192.42,110.37 A14.30,14.30 0 1 1 213.30,112.20 A11.44,11.44 0 1 0 192.42,110.37 Z" fill="#fd8343"/>
+    <path d="M189.98,125.24 A11.72,11.72 0 1 1 202.96,136.51 A9.38,9.38 0 1 0 189.98,125.24 Z" fill="#f97250"/>
+    <path d="M181.20,133.93 A9.61,9.61 0 1 1 184.37,147.66 A7.69,7.69 0 1 0 181.20,133.93 Z" fill="#f5625e"/>
+    <path d="M171.19,135.46 A7.88,7.88 0 1 1 166.68,146.10 A6.31,6.31 0 1 0 171.19,135.46 Z" fill="#f1526b"/>
+    <path d="M163.81,131.65 A6.46,6.46 0 1 1 155.69,136.53 A5.17,5.17 0 1 0 163.81,131.65 Z" fill="#ec4279"/>
+    <path d="M160.75,125.57 A5.30,5.30 0 1 1 153.01,124.89 A4.24,4.24 0 1 0 160.75,125.57 Z" fill="#d64499"/>
+    <path d="M161.65,120.05 A4.35,4.35 0 1 1 156.84,115.87 A3.48,3.48 0 1 0 161.65,120.05 Z" fill="#bd49bb"/>
+    <path d="M164.91,116.83 A3.56,3.56 0 1 1 163.73,111.74 A2.85,2.85 0 1 0 164.91,116.83 Z" fill="#a54ddd"/>
+    <path d="M168.62,116.27 A2.92,2.92 0 1 1 170.29,112.32 A2.34,2.34 0 1 0 168.62,116.27 Z" fill="#8c52ff"/>
+  </g>
+</svg>

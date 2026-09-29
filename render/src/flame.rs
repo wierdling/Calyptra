@@ -12,6 +12,11 @@ const ITERATIONS: u32 = 128;
 const POINTS_PER_BATCH: f64 = THREADS as f64 * ITERATIONS as f64;
 /// Transform slots in the GPU buffer: the maximum plus the final transform.
 const XFORM_SLOTS: usize = Flame::MAX_XFORMS + 1;
+/// Largest density estimation radius, in output pixels.
+const MAX_DE_RADIUS: f32 = 16.0;
+/// Blurred pyramid levels for density estimation; must match LEVELS in
+/// flame_tonemap.wgsl.
+const DE_LEVELS: u32 = 5;
 
 // ---- GPU layouts; must match flame.wgsl / flame_tonemap.wgsl ----
 
@@ -106,6 +111,34 @@ struct ToneParams {
     brightness: f32,
     gamma: f32,
     vibrancy: f32,
+    de_max_radius: f32,
+    de_min_radius: f32,
+    de_curve: f32,
+    _pad1: u32,
+}
+
+/// Texels in all density estimation levels: level `l` holds one per
+/// 2^l × 2^l block of output pixels.
+fn level_texels(width: u32, height: u32) -> u64 {
+    (0..DE_LEVELS)
+        .map(|l| u64::from(width.div_ceil(1 << l)) * u64::from(height.div_ceil(1 << l)))
+        .sum()
+}
+
+/// The flame with its tone-mapping settings neutralized: changing only
+/// those re-tones the histogram instead of restarting it.
+fn histogram_key(flame: &Flame) -> Flame {
+    Flame {
+        brightness: 0.0,
+        gamma: 0.0,
+        vibrancy: 0.0,
+        background: [0.0; 3],
+        quality: 0.0,
+        estimator_radius: 0.0,
+        estimator_minimum: 0.0,
+        estimator_curve: 0.0,
+        ..flame.clone()
+    }
 }
 
 struct Histogram {
@@ -113,6 +146,8 @@ struct Histogram {
     height: u32,
     supersample: u32,
     chaos_bind_group: wgpu::BindGroup,
+    reduce_bind_group: wgpu::BindGroup,
+    levels_bind_group: wgpu::BindGroup,
     tone_bind_group: wgpu::BindGroup,
     buffer: wgpu::Buffer,
 }
@@ -122,6 +157,10 @@ struct Histogram {
 pub struct FlameRenderer {
     chaos_pipeline: wgpu::ComputePipeline,
     chaos_layout: wgpu::BindGroupLayout,
+    reduce_pipeline: wgpu::ComputePipeline,
+    reduce_layout: wgpu::BindGroupLayout,
+    levels_pipeline: wgpu::ComputePipeline,
+    levels_layout: wgpu::BindGroupLayout,
     tone_pipeline: wgpu::RenderPipeline,
     tone_layout: wgpu::BindGroupLayout,
     chaos_params: wgpu::Buffer,
@@ -206,7 +245,9 @@ impl FlameRenderer {
             label: Some("flame tonemap"),
             entries: &[
                 entry(0, fragment, uniform),
-                entry(1, fragment, storage(true)),
+                entry(2, fragment, storage(true)),
+                entry(3, fragment, storage(true)),
+                entry(4, fragment, storage(true)),
             ],
         });
         let tone_module = fullscreen_shader(
@@ -214,6 +255,43 @@ impl FlameRenderer {
             "flame tonemap",
             include_str!("shaders/flame_tonemap.wgsl"),
         );
+        let compute_pipeline = |label, layout: &wgpu::BindGroupLayout, entry_point| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(
+                    &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some(label),
+                        bind_group_layouts: &[Some(layout)],
+                        immediate_size: 0,
+                    }),
+                ),
+                module: &tone_module,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let reduce_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("flame reduce"),
+            entries: &[
+                entry(0, compute, uniform),
+                entry(1, compute, storage(true)),
+                entry(5, compute, storage(false)),
+                entry(6, compute, storage(false)),
+            ],
+        });
+        let reduce_pipeline = compute_pipeline("flame reduce", &reduce_layout, "reduce");
+        let levels_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("flame density levels"),
+            entries: &[
+                entry(0, compute, uniform),
+                entry(2, compute, storage(true)),
+                entry(3, compute, storage(true)),
+                entry(7, compute, storage(false)),
+            ],
+        });
+        let levels_pipeline =
+            compute_pipeline("flame density levels", &levels_layout, "build_levels");
         let tone_pipeline = fullscreen_pipeline(
             device,
             "flame tonemap",
@@ -236,6 +314,10 @@ impl FlameRenderer {
         Self {
             chaos_pipeline,
             chaos_layout,
+            reduce_pipeline,
+            reduce_layout,
+            levels_pipeline,
+            levels_layout,
             tone_pipeline,
             tone_layout,
             chaos_params: buffer(
@@ -337,18 +419,54 @@ impl FlameRenderer {
                 },
             ],
         });
+        // Per output pixel: log-scaled value and pyramid level; then the
+        // density estimation levels.
+        let storage_buffer = |label, size: u64| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            })
+        };
+        let pixel_count = u64::from(width) * u64::from(height);
+        let pixels = storage_buffer("flame pixels", pixel_count * 16);
+        let pixel_levels = storage_buffer("flame pixel levels", pixel_count * 4);
+        let levels = storage_buffer("flame density levels", level_texels(width, height) * 16);
+        fn bind(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+            wgpu::BindGroupEntry {
+                binding,
+                resource: buffer.as_entire_binding(),
+            }
+        }
+        let reduce_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("flame reduce"),
+            layout: &self.reduce_layout,
+            entries: &[
+                bind(0, &self.tone_params),
+                bind(1, &buffer),
+                bind(5, &pixels),
+                bind(6, &pixel_levels),
+            ],
+        });
+        let levels_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("flame density levels"),
+            layout: &self.levels_layout,
+            entries: &[
+                bind(0, &self.tone_params),
+                bind(2, &pixels),
+                bind(3, &pixel_levels),
+                bind(7, &levels),
+            ],
+        });
         let tone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("flame tonemap"),
             layout: &self.tone_layout,
             entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.tone_params.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buffer.as_entire_binding(),
-                },
+                bind(0, &self.tone_params),
+                bind(2, &pixels),
+                bind(3, &pixel_levels),
+                bind(4, &levels),
             ],
         });
         self.histogram = Some(Histogram {
@@ -356,6 +474,8 @@ impl FlameRenderer {
             height,
             supersample: ss,
             chaos_bind_group,
+            reduce_bind_group,
+            levels_bind_group,
             tone_bind_group,
             buffer,
         });
@@ -401,7 +521,7 @@ impl Renderer for FlameRenderer {
         let flame = &scene.flame;
         let (width, height) = (target.width, target.height);
         let fresh = self.ensure_histogram(device, width, height, flame.supersample);
-        let key = (flame.clone(), scene.coloring.gradient.clone());
+        let key = (histogram_key(flame), scene.coloring.gradient.clone());
         let changed = self.current.as_ref() != Some(&key);
         let reset = fresh || changed || input.sample == 0;
         let Some(histogram) = &self.histogram else {
@@ -468,8 +588,27 @@ impl Renderer for FlameRenderer {
             brightness: flame.brightness,
             gamma: flame.gamma.max(0.1),
             vibrancy: flame.vibrancy,
+            de_max_radius: flame.estimator_radius.clamp(0.0, MAX_DE_RADIUS),
+            de_min_radius: flame.estimator_minimum.clamp(0.0, MAX_DE_RADIUS),
+            de_curve: flame.estimator_curve.max(0.0),
+            _pad1: 0,
         };
         queue.write_buffer(&self.tone_params, 0, bytemuck::bytes_of(&tone));
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("flame reduce"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.reduce_pipeline);
+            pass.set_bind_group(0, &histogram.reduce_bind_group, &[]);
+            pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+            if tone.de_max_radius > 0.0 {
+                // z = level; threads past a smaller level's edge exit.
+                pass.set_pipeline(&self.levels_pipeline);
+                pass.set_bind_group(0, &histogram.levels_bind_group, &[]);
+                pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), DE_LEVELS);
+            }
+        }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("flame tonemap"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -545,6 +684,28 @@ mod tests {
             struct_size(&tone, "ToneParams") as usize,
             size_of::<ToneParams>()
         );
+    }
+
+    #[test]
+    fn density_levels_match_the_shader() {
+        let tone = include_str!("shaders/flame_tonemap.wgsl");
+        assert!(tone.contains(&format!("const LEVELS: u32 = {DE_LEVELS}u;")));
+        // Partial blocks at the edges get their own texels.
+        assert_eq!(level_texels(5, 3), 15 + 6 + 2 + 1 + 1);
+    }
+
+    #[test]
+    fn tone_changes_keep_the_histogram() {
+        let flame = Flame::default();
+        let toned = Flame {
+            brightness: flame.brightness * 2.0,
+            estimator_radius: 3.0,
+            ..flame.clone()
+        };
+        assert_eq!(histogram_key(&flame), histogram_key(&toned));
+        let mut moved = flame.clone();
+        moved.camera.zoom *= 2.0;
+        assert_ne!(histogram_key(&flame), histogram_key(&moved));
     }
 
     #[test]

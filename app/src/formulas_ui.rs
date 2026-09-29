@@ -5,12 +5,32 @@ use std::path::{Path, PathBuf};
 
 use formulas::{Library, Origin};
 
-/// Where user formulas live: `%APPDATA%\Fractals\formulas` on Windows.
+/// Where user formulas live: `%APPDATA%\Calyptra\formulas` on Windows.
+/// The first time, formulas from before the rename (`Fractals\formulas`)
+/// are copied over; the old folder is left alone.
 pub fn user_formula_dir() -> PathBuf {
     let base = std::env::var_os("APPDATA")
         .or_else(|| std::env::var_os("HOME"))
         .map_or_else(|| PathBuf::from("."), PathBuf::from);
-    base.join("Fractals").join("formulas")
+    let dir = base.join("Calyptra").join("formulas");
+    let legacy = base.join("Fractals").join("formulas");
+    if !dir.exists() && legacy.is_dir() {
+        if let Err(error) = copy_formulas(&legacy, &dir) {
+            log::warn!("copying formulas from {}: {error}", legacy.display());
+        }
+    }
+    dir
+}
+
+fn copy_formulas(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            std::fs::copy(entry.path(), to.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Every problem worth showing: load errors plus user formulas that do not

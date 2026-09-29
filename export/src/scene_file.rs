@@ -7,8 +7,11 @@ use serde::{Deserialize, Serialize};
 use crate::ExportError;
 
 /// PNG iTXt keyword holding the scene JSON.
-pub(crate) const PNG_SCENE_KEY: &str = "fractals-scene";
-const FORMAT: &str = "fractals-scene";
+pub(crate) const PNG_SCENE_KEY: &str = "calyptra-scene";
+const FORMAT: &str = "calyptra-scene";
+/// What the format was called before the program was renamed Calyptra;
+/// still read, as both the format tag and the PNG keyword.
+const LEGACY_FORMAT: &str = "fractals-scene";
 const VERSION: u32 = 1;
 
 #[derive(Serialize, Deserialize)]
@@ -45,7 +48,7 @@ pub fn scene_to_json(scene: &Scene) -> Result<String, ExportError> {
 fn project_from_json(json: &str) -> Result<Project, ExportError> {
     let file: SceneFile =
         serde_json::from_str(json).map_err(|e| ExportError::Scene(e.to_string()))?;
-    if file.format != FORMAT {
+    if file.format != FORMAT && file.format != LEGACY_FORMAT {
         return Err(ExportError::Scene(format!(
             "not a scene file ({:?})",
             file.format
@@ -93,7 +96,7 @@ pub fn load_project(path: &Path) -> Result<Project, ExportError> {
         .info()
         .utf8_text
         .iter()
-        .find(|chunk| chunk.keyword == PNG_SCENE_KEY)
+        .find(|chunk| chunk.keyword == PNG_SCENE_KEY || chunk.keyword == LEGACY_FORMAT)
         .ok_or_else(|| ExportError::Scene("this PNG has no embedded scene".into()))?;
     let json = chunk
         .get_text()
@@ -107,7 +110,7 @@ mod tests {
     use crate::{ImageFormat, save_image};
 
     fn temp_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("fractals-scene-test-{}-{name}", std::process::id()))
+        std::env::temp_dir().join(format!("calyptra-scene-test-{}-{name}", std::process::id()))
     }
 
     fn distinctive_scene() -> Scene {
@@ -124,6 +127,14 @@ mod tests {
         save_scene(&path, &distinctive_scene(), None).unwrap();
         assert_eq!(load_scene(&path).unwrap(), distinctive_scene());
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn scene_files_from_before_the_rename_still_load() {
+        let json = scene_to_json(&distinctive_scene())
+            .unwrap()
+            .replace(FORMAT, LEGACY_FORMAT);
+        assert_eq!(project_from_json(&json).unwrap().scene, distinctive_scene());
     }
 
     #[test]
