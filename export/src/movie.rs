@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anim::Animation;
-use render::{RaymarchRenderer, StillSettings};
+use render::{FlameRenderer, RaymarchRenderer, Renderer, StillSettings};
+use scene::FractalKind;
 use serde::{Deserialize, Serialize};
 
 use crate::ExportError;
@@ -147,7 +148,9 @@ pub fn render_movie(
     check_job(settings, animation)?;
 
     let total = animation.frame_count();
-    let mut renderer = RaymarchRenderer::new(device);
+    let mut raymarch = RaymarchRenderer::new(device);
+    // Created on first use: most movies are one kind or the other.
+    let mut flame: Option<FlameRenderer> = None;
     let mut current_de: Option<String> = None;
     let still = StillSettings {
         width: settings.width,
@@ -170,19 +173,25 @@ pub fn render_movie(
         let mut scene = animation
             .scene_at(animation.frame_time(frame))
             .expect("animation has keyframes");
-        library.normalize(&mut scene.fractal);
-        let de = formulas::compose(&scene.fractal, library)
-            .map_err(|e| ExportError::Movie(format!("frame {frame}: {e}")))?;
-        if current_de.as_ref() != Some(&de) {
-            renderer.set_de_source(device, de.clone());
-            if let Some(error) = renderer.error() {
-                return Err(ExportError::Movie(format!("frame {frame}: {error}")));
+        let renderer: &mut dyn Renderer = match scene.kind {
+            FractalKind::Flame => flame.get_or_insert_with(|| FlameRenderer::new(device)),
+            FractalKind::Distance => {
+                library.normalize(&mut scene.fractal);
+                let de = formulas::compose(&scene.fractal, library)
+                    .map_err(|e| ExportError::Movie(format!("frame {frame}: {e}")))?;
+                if current_de.as_ref() != Some(&de) {
+                    raymarch.set_de_source(device, de.clone());
+                    if let Some(error) = raymarch.error() {
+                        return Err(ExportError::Movie(format!("frame {frame}: {error}")));
+                    }
+                    current_de = Some(de);
+                }
+                &mut raymarch
             }
-            current_de = Some(de);
-        }
+        };
 
         let mut cancelled = false;
-        let image = render::render_still(device, queue, &mut renderer, &scene, still, |f| {
+        let image = render::render_still(device, queue, renderer, &scene, still, |f| {
             cancelled = !progress(MovieEvent::FrameProgress(f));
             !cancelled
         })

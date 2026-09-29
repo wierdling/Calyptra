@@ -1,5 +1,6 @@
 use scene::{ColorSource, Fractal, RenderMode, Wrap};
 
+use crate::gradient::GradientTexture;
 use crate::hot_reload::WatchedFile;
 use crate::readback::Readback;
 use crate::{
@@ -134,9 +135,6 @@ impl Uniforms {
     }
 }
 
-/// Resolution of the gradient lookup texture.
-const GRADIENT_SIZE: u32 = 1024;
-
 /// Must match `probe_out` in `raymarch.wgsl`.
 const PROBE_GRID: usize = 16;
 const PROBE_LEN: usize = 2 + PROBE_GRID * PROBE_GRID;
@@ -181,9 +179,7 @@ pub struct RaymarchRenderer {
     probe_layout: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
-    gradient_texture: wgpu::Texture,
-    /// Gradient currently in `gradient_texture`.
-    uploaded_gradient: Option<color::Gradient>,
+    gradient: GradientTexture,
     probe_buffer: wgpu::Buffer,
     probe_bind_group: wgpu::BindGroup,
     probe_readback: Readback,
@@ -244,29 +240,7 @@ impl RaymarchRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // sRGB storage: the sampler returns linear color, filtered in linear.
-        let gradient_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("gradient"),
-            size: wgpu::Extent3d {
-                width: GRADIENT_SIZE,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let gradient_view = gradient_texture.create_view(&Default::default());
-        // Clamp to edge: wrapping is done in the shader (repeat / mirror / clamp).
-        let gradient_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("gradient"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let gradient = GradientTexture::new(device);
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("raymarch uniforms"),
             layout: &uniform_layout,
@@ -277,11 +251,11 @@ impl RaymarchRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&gradient_view),
+                    resource: wgpu::BindingResource::TextureView(&gradient.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&gradient_sampler),
+                    resource: wgpu::BindingResource::Sampler(&gradient.sampler),
                 },
             ],
         });
@@ -312,8 +286,7 @@ impl RaymarchRenderer {
             probe_layout,
             uniform_buffer,
             uniform_bind_group,
-            gradient_texture,
-            uploaded_gradient: None,
+            gradient,
             probe_buffer,
             probe_bind_group,
             probe_readback: Readback::new(device, "raymarch probe readback", PROBE_SIZE),
@@ -345,29 +318,7 @@ impl RaymarchRenderer {
     fn write_uniforms(&mut self, queue: &wgpu::Queue, input: &FrameInput<'_>) {
         let uniforms = Uniforms::new(input.scene, &input.region, input.sample);
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-        self.upload_gradient(queue, &input.scene.coloring.gradient);
-    }
-
-    fn upload_gradient(&mut self, queue: &wgpu::Queue, gradient: &color::Gradient) {
-        if self.uploaded_gradient.as_ref() == Some(gradient) {
-            return;
-        }
-        let texels: Vec<u8> = gradient
-            .bake_srgb8(GRADIENT_SIZE as usize)
-            .into_iter()
-            .flat_map(|[r, g, b]| [r, g, b, 255])
-            .collect();
-        queue.write_texture(
-            self.gradient_texture.as_image_copy(),
-            &texels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(GRADIENT_SIZE * 4),
-                rows_per_image: Some(1),
-            },
-            self.gradient_texture.size(),
-        );
-        self.uploaded_gradient = Some(gradient.clone());
+        self.gradient.upload(queue, &input.scene.coloring.gradient);
     }
 
     /// Compile error from the most recent rebuild, if any.

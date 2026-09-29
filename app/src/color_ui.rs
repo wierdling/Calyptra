@@ -13,14 +13,19 @@ pub struct GradientEditor {
 }
 
 /// Returns `true` if the user asked to fit the gradient to the view.
+/// `full = false` shows only the palette (flames pick colors themselves).
 pub fn coloring_ui(
     ui: &mut egui::Ui,
     coloring: &mut Coloring,
     editor: &mut GradientEditor,
+    full: bool,
 ) -> bool {
     palette_menu(ui, coloring, editor);
     ui.add_space(4.0);
     gradient_editor(ui, &mut coloring.gradient, editor);
+    if !full {
+        return false;
+    }
     ui.add_space(6.0);
 
     let mut fit = false;

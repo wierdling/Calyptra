@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use export::ImageFormat;
-use render::{RaymarchRenderer, StillSettings};
+use render::{FlameRenderer, RaymarchRenderer, Renderer, StillSettings};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -45,15 +45,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let adapter = pollster::block_on(instance.request_adapter(&Default::default()))?;
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default()))?;
-    let mut renderer = RaymarchRenderer::new(&device);
-    renderer.set_de_source(&device, formulas::compose(&scene.fractal, &library)?);
-    if let Some(error) = renderer.error() {
-        return Err(error.into());
-    }
+    let mut renderer: Box<dyn Renderer> = match scene.kind {
+        scene::FractalKind::Flame => Box::new(FlameRenderer::new(&device)),
+        scene::FractalKind::Distance => {
+            let mut raymarch = RaymarchRenderer::new(&device);
+            raymarch.set_de_source(&device, formulas::compose(&scene.fractal, &library)?);
+            if let Some(error) = raymarch.error() {
+                return Err(error.into());
+            }
+            Box::new(raymarch)
+        }
+    };
 
     let start = Instant::now();
     let mut last_report = 0.0;
-    let image = render::render_still(&device, &queue, &mut renderer, &scene, settings, |f| {
+    let image = render::render_still(&device, &queue, renderer.as_mut(), &scene, settings, |f| {
         if f - last_report >= 0.1 {
             last_report = f;
             eprintln!("{:3.0}%", f * 100.0);

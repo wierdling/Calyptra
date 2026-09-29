@@ -90,7 +90,7 @@ every preset headlessly to `renders/presets/`.
 | **M5** ✅ | Path tracer: progressive, DOF, environment light, tone mapping, OIDN denoise | Photoreal renders |
 | **M6** ✅ | Animation: timeline, keyframes, Catmull-Rom camera splines, easing, preview, resumable render queue, ffmpeg | Movies |
 | **M7** ✅ | Custom formulas: user WGSL snippets, hot reload, in-UI error reporting | Your own formulas |
-| **M8** | Flame fractals: chaos game compute shader, variations, log-density + density estimation | Flames |
+| **M8** ✅ | Flame fractals: chaos game compute shader, variations, log-density + density estimation | Flames |
 
 ## Coloring (M3) notes
 
@@ -163,12 +163,19 @@ every preset headlessly to `renders/presets/`.
 
 ## Flame fractals (M8) notes
 
-Different paradigm (point splatting into a histogram rather than per-pixel
-rays), so new code is: variation library, chaos-game compute shader (atomic
-accumulation), log-density tone mapping, density-estimation filter. Reused:
-gradients, timeline/keyframes, HDR accumulation, tone mapping, export, UI,
-camera (3D flames). Estimated 1–2 milestones if the `Renderer` trait is in
-place.
+- `scene::flame`: transforms (weight, color, affine, up to 4 of 28 flam3
+  variations, optional post-affine), final transform, 2D camera, quality /
+  supersample / brightness / gamma / vibrancy / background; deterministic
+  random generator and mutation; presets.
+- `render::FlameRenderer`: GPU chaos game (32k persistent points, 4.2M
+  points per batch) with atomic splats into a histogram; log-density tone
+  mapping. Refines internally, so the viewport shows its latest output and
+  still export renders full-frame batches until the quality is reached.
+  1080p at quality 400 with 2x supersampling: ~6 s on the Iris Xe.
+- UI: 3D / Flame switch, transform editor, Random / Mutate, 2D navigation.
+  Flames animate and export like 3D scenes.
+- Not done: density estimation (adaptive blur of sparse areas), import of
+  Apophysis / JWildfire `.flame` files, 3D flames.
 
 ## Environment setup
 

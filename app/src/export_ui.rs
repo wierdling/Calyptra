@@ -7,8 +7,8 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use export::ImageFormat;
-use render::{RaymarchRenderer, StillSettings};
-use scene::Scene;
+use render::{FlameRenderer, RaymarchRenderer, Renderer, StillSettings};
+use scene::{FractalKind, Scene};
 
 const RESOLUTIONS: &[(&str, u32, u32)] = &[
     ("HD 1280×720", 1280, 720),
@@ -231,15 +231,21 @@ impl ExportDialog {
             .spawn(move || {
                 let result = (|| {
                     // A private renderer: the viewport keeps its own.
-                    let mut renderer = RaymarchRenderer::new(&device);
-                    renderer.set_de_source(&device, de_source);
-                    if let Some(error) = renderer.error() {
-                        return Err(error.to_owned());
-                    }
+                    let mut renderer: Box<dyn Renderer> = match scene.kind {
+                        FractalKind::Flame => Box::new(FlameRenderer::new(&device)),
+                        FractalKind::Distance => {
+                            let mut raymarch = RaymarchRenderer::new(&device);
+                            raymarch.set_de_source(&device, de_source);
+                            if let Some(error) = raymarch.error() {
+                                return Err(error.to_owned());
+                            }
+                            Box::new(raymarch)
+                        }
+                    };
                     let image = render::render_still(
                         &device,
                         &queue,
-                        &mut renderer,
+                        renderer.as_mut(),
                         &scene,
                         settings,
                         |f| {

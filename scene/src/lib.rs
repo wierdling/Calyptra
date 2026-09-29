@@ -3,6 +3,8 @@
 //! Plain data, serializable, and comparable so the UI can tell when a
 //! re-render is needed.
 
+pub mod flame;
+
 use glam::{DMat3, DQuat, DVec3};
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +13,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Scene {
+    /// Which kind of fractal this scene shows; the other kind's settings
+    /// are kept but unused.
+    pub kind: FractalKind,
     pub camera: Camera,
     pub fractal: Fractal,
     pub quality: Quality,
@@ -18,6 +23,16 @@ pub struct Scene {
     pub coloring: Coloring,
     pub display: DisplaySettings,
     pub render: RenderSettings,
+    pub flame: flame::Flame,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FractalKind {
+    /// 3D distance-estimated fractal (raymarched / path traced).
+    #[default]
+    Distance,
+    /// 2D fractal flame (chaos game).
+    Flame,
 }
 
 /// Right-handed, Y-up. The camera looks down its local -Z axis.

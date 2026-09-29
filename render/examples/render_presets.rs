@@ -18,6 +18,7 @@ struct Gpu {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let palettes = std::env::args().any(|a| a == "--palettes");
     let path_trace = std::env::args().any(|a| a == "--pathtrace");
+    let flames = std::env::args().any(|a| a == "--flames");
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
@@ -32,7 +33,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gpu = Gpu { device, queue };
 
     let out_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../renders");
-    if palettes {
+    if flames {
+        flame_sheet(&gpu, &out_dir)
+    } else if palettes {
         palette_sheet(&gpu, &out_dir)
     } else {
         each_preset(&gpu, &out_dir.join("presets"), path_trace)
@@ -65,6 +68,91 @@ fn each_preset(
         write_png(&path, width, height, &pixels)?;
         println!("{name} ({elapsed:.1?}) -> {}", path.display());
     }
+    Ok(())
+}
+
+/// Flame presets followed by random flames, each with a different palette,
+/// tiled 4 across.
+fn flame_sheet(gpu: &Gpu, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(out_dir)?;
+    let (tile_w, tile_h, columns) = (400u32, 300u32, 4u32);
+    let mut flames: Vec<(String, scene::flame::Flame)> = scene::flame::presets()
+        .into_iter()
+        .map(|(name, flame)| (name.to_owned(), flame))
+        .collect();
+    for seed in 1..=8u64 {
+        flames.push((format!("random {seed}"), scene::flame::Flame::random(seed)));
+    }
+    let palettes = color::presets();
+    let rows = (flames.len() as u32).div_ceil(columns);
+    let (sheet_w, sheet_h) = (tile_w * columns, tile_h * rows);
+    let mut sheet = vec![0u8; (sheet_w * sheet_h * 4) as usize];
+
+    let mut renderer = render::FlameRenderer::new(&gpu.device);
+    for (index, (name, flame)) in flames.into_iter().enumerate() {
+        let mut scene = scene::Scene {
+            kind: scene::FractalKind::Flame,
+            flame,
+            ..Default::default()
+        };
+        let palette = &palettes[(index + 1) % palettes.len()];
+        scene.coloring.gradient = palette.gradient.clone();
+        let start = std::time::Instant::now();
+        let settings = StillSettings {
+            width: tile_w,
+            height: tile_h,
+            samples: 1,
+        };
+        let image = render_still(
+            &gpu.device,
+            &gpu.queue,
+            &mut renderer,
+            &scene,
+            settings,
+            |_| true,
+        )
+        .ok_or("cancelled")?;
+        let (x0, y0) = (
+            (index as u32 % columns) * tile_w,
+            (index as u32 / columns) * tile_h,
+        );
+        for (i, &[r, g, b, _]) in image.pixels.iter().enumerate() {
+            let (x, y) = (i as u32 % tile_w, i as u32 / tile_w);
+            let rgb = display_transform([r, g, b], &scene.display);
+            let dst = (((y0 + y) * sheet_w + x0 + x) * 4) as usize;
+            for (c, value) in rgb.iter().enumerate() {
+                sheet[dst + c] = (value * 255.0).round() as u8;
+            }
+            sheet[dst + 3] = 255;
+        }
+        println!(
+            "{index:2}: {name} ({}, {:.1?})",
+            palette.name,
+            start.elapsed()
+        );
+    }
+    // The interactive path: progressive batches through a Viewport.
+    let scene = scene::Scene {
+        kind: scene::FractalKind::Flame,
+        ..Default::default()
+    };
+    let mut viewport = Viewport::new(&gpu.device, &gpu.queue, 640, 360);
+    for sample in 0..10 {
+        viewport.render(&gpu.device, &gpu.queue, &mut renderer, &scene, sample);
+    }
+    let pixels = viewport.read_display_pixels(&gpu.device, &gpu.queue);
+    let lit = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[0] > 40 || p[1] > 40 || p[2] > 40)
+        .count();
+    println!("viewport: {} samples, {lit} lit pixels", viewport.samples());
+    write_png(&out_dir.join("flame_viewport.png"), 640, 360, &pixels)?;
+
+    let path = out_dir.join("flames.png");
+    write_png(&path, sheet_w, sheet_h, &sheet)?;
+    println!("-> {}", path.display());
     Ok(())
 }
 

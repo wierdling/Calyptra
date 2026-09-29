@@ -8,8 +8,10 @@
 mod accumulate;
 mod denoise;
 mod display;
+mod flame;
 mod formula_check;
 mod gpu_timer;
+mod gradient;
 mod hot_reload;
 mod raymarch;
 mod readback;
@@ -18,6 +20,7 @@ mod still;
 mod viewport;
 
 pub use display::display_transform;
+pub use flame::FlameRenderer;
 pub use formula_check::check_formula;
 pub use gpu_timer::GpuTimings;
 pub use raymarch::RaymarchRenderer;

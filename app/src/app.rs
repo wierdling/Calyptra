@@ -1,12 +1,13 @@
 use std::time::{Duration, Instant};
 
 use formulas::Library;
-use render::{RaymarchRenderer, Renderer, ToneMap, Viewport};
-use scene::{DeMode, RenderMode, Scene};
+use render::{FlameRenderer, RaymarchRenderer, Renderer, ToneMap, Viewport};
+use scene::{DeMode, FractalKind, RenderMode, Scene};
 
 use crate::camera_control::{CameraController, CameraMode, NavInput};
 use crate::color_ui::{GradientEditor, coloring_ui};
 use crate::export_ui::{ExportContext, ExportDialog};
+use crate::flame_ui::FlameEditor;
 use crate::formulas_ui::{FormulasPanel, formula_problems, user_formula_dir};
 use crate::fractal_ui::fractal_editor;
 use crate::movie_ui::MovieDialog;
@@ -56,6 +57,8 @@ pub struct FractalApp {
     camera_control: CameraController,
     viewport: Viewport,
     renderer: RaymarchRenderer,
+    flame_renderer: FlameRenderer,
+    flame_editor: FlameEditor,
     library: Library,
     shader_key: Option<ShaderKey>,
     /// Composition problem for the current fractal, shown in the panel.
@@ -116,6 +119,8 @@ impl FractalApp {
             scene,
             camera_control: CameraController::default(),
             renderer: RaymarchRenderer::new(&rs.device),
+            flame_renderer: FlameRenderer::new(&rs.device),
+            flame_editor: FlameEditor::default(),
             library,
             shader_key: None,
             formula_error: None,
@@ -146,19 +151,33 @@ impl FractalApp {
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Fractals");
-        ui.label(format!("Renderer: {}", self.renderer.name()));
+        ui.horizontal(|ui| {
+            let kind = &mut self.scene.kind;
+            ui.selectable_value(kind, FractalKind::Distance, "3D fractal");
+            ui.selectable_value(kind, FractalKind::Flame, "Flame");
+        });
         ui.separator();
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            self.camera_section(ui);
-            self.fractal_section(ui);
-            self.formulas_section(ui);
-            self.color_section(ui);
-            self.lighting_section(ui);
-            self.render_section(ui);
-            self.quality_section(ui);
-            self.display_section(ui);
-            self.performance_section(ui);
+        egui::ScrollArea::vertical().show(ui, |ui| match self.scene.kind {
+            FractalKind::Distance => {
+                self.camera_section(ui);
+                self.fractal_section(ui);
+                self.formulas_section(ui);
+                self.color_section(ui);
+                self.lighting_section(ui);
+                self.render_section(ui);
+                self.quality_section(ui);
+                self.display_section(ui);
+                self.performance_section(ui);
+            }
+            FractalKind::Flame => {
+                egui::CollapsingHeader::new("Flame")
+                    .default_open(true)
+                    .show(ui, |ui| self.flame_editor.ui(ui, &mut self.scene.flame));
+                self.color_section(ui);
+                self.display_section(ui);
+                self.performance_section(ui);
+            }
         });
     }
 
@@ -470,7 +489,13 @@ impl FractalApp {
             .default_open(true)
             .show(ui, |ui| {
                 let source = self.scene.coloring.source;
-                let fit = coloring_ui(ui, &mut self.scene.coloring, &mut self.gradient_editor);
+                let full = self.scene.kind == FractalKind::Distance;
+                let fit = coloring_ui(
+                    ui,
+                    &mut self.scene.coloring,
+                    &mut self.gradient_editor,
+                    full,
+                );
                 if fit || self.scene.coloring.source != source {
                     self.request_fit();
                 }
@@ -592,11 +617,17 @@ impl FractalApp {
     fn viewport_ui(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
         let rect = ui.available_rect_before_wrap();
         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-        let probe = self.renderer.probe();
-        let input = NavInput::gather(&response, ui.ctx());
-        let navigating = self
-            .camera_control
-            .update(&mut self.scene.camera, &input, probe);
+        let navigating = match self.scene.kind {
+            FractalKind::Distance => {
+                let probe = self.renderer.probe();
+                let input = NavInput::gather(&response, ui.ctx());
+                self.camera_control
+                    .update(&mut self.scene.camera, &input, probe)
+            }
+            FractalKind::Flame => {
+                crate::flame_ui::navigate(&mut self.scene.flame.camera, &response, ui.ctx())
+            }
+        };
         let now = Instant::now();
         if navigating || self.timeline.playing {
             self.last_interaction = now;
@@ -629,10 +660,17 @@ impl FractalApp {
         if !settled {
             scene.render.mode = RenderMode::Preview;
         }
-        let target_samples = match (settled, scene.render.mode) {
-            (false, _) => 1,
-            (true, RenderMode::Preview) => PREVIEW_SAMPLES,
-            (true, RenderMode::PathTrace) => scene.render.viewport_samples.max(1),
+        let target_samples = match (settled, scene.kind, scene.render.mode) {
+            (false, ..) => 1,
+            (true, FractalKind::Flame, _) => {
+                FlameRenderer::batches_needed(&scene.flame, size.0, size.1)
+            }
+            (true, _, RenderMode::Preview) => PREVIEW_SAMPLES,
+            (true, _, RenderMode::PathTrace) => scene.render.viewport_samples.max(1),
+        };
+        let renderer: &mut dyn Renderer = match scene.kind {
+            FractalKind::Distance => &mut self.renderer,
+            FractalKind::Flame => &mut self.flame_renderer,
         };
 
         let state = RenderedState::new(&scene, size);
@@ -647,13 +685,13 @@ impl FractalApp {
                 );
             }
             self.viewport
-                .render(&rs.device, &rs.queue, &mut self.renderer, &scene, 0);
+                .render(&rs.device, &rs.queue, renderer, &scene, 0);
             self.rendered = Some(state);
             self.presented = Some(scene);
         } else if self.viewport.samples() < target_samples {
             let sample = self.viewport.samples();
             self.viewport
-                .render(&rs.device, &rs.queue, &mut self.renderer, &scene, sample);
+                .render(&rs.device, &rs.queue, renderer, &scene, sample);
             self.presented = Some(scene);
             refining = true;
         } else if self.presented.as_ref() != Some(&scene) {

@@ -223,13 +223,15 @@ impl Viewport {
                 &input,
             );
         }
-        targets.accumulator.accumulate(
-            device,
-            queue,
-            &mut encoder,
-            &targets.sample.view,
-            sample + 1,
-        );
+        // Renderers that refine internally hand over finished images.
+        let count = if renderer.accumulates_internally() {
+            1
+        } else {
+            sample + 1
+        };
+        targets
+            .accumulator
+            .accumulate(device, queue, &mut encoder, &targets.sample.view, count);
         self.samples = sample + 1;
         self.present(device, queue, &mut encoder, scene);
         if let Some(timer) = &mut self.timer {

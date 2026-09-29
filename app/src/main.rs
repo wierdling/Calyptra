@@ -4,6 +4,7 @@ mod app;
 mod camera_control;
 mod color_ui;
 mod export_ui;
+mod flame_ui;
 mod formulas_ui;
 mod fractal_ui;
 mod movie_ui;
@@ -33,7 +34,8 @@ fn main() -> eframe::Result {
     )
 }
 
-/// D3D12/Vulkan only, and request timestamp queries when the adapter has them.
+/// D3D12/Vulkan only; timestamp queries and the full storage-buffer limits
+/// when the adapter has them.
 fn wgpu_options() -> egui_wgpu::WgpuConfiguration {
     let mut setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends =
@@ -43,6 +45,11 @@ fn wgpu_options() -> egui_wgpu::WgpuConfiguration {
         let mut descriptor = default_descriptor(adapter);
         descriptor.label = Some("fractals device");
         descriptor.required_features |= adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+        // Flame histograms are large storage buffers: allow what the GPU can.
+        let supported = adapter.limits();
+        descriptor.required_limits.max_storage_buffer_binding_size =
+            supported.max_storage_buffer_binding_size;
+        descriptor.required_limits.max_buffer_size = supported.max_buffer_size;
         descriptor
     });
     egui_wgpu::WgpuConfiguration {

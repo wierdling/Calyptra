@@ -95,6 +95,9 @@ pub fn render_still(
         samples,
     } = settings;
     let samples = samples.max(1);
+    if renderer.accumulates_internally() {
+        return render_full_frame(device, queue, renderer, scene, settings, progress);
+    }
     let denoise = scene.render.mode == RenderMode::PathTrace && scene.render.denoise;
 
     let accumulator = Accumulator::new(device, TILE, TILE);
@@ -183,6 +186,49 @@ pub fn render_still(
         progress(1.0);
     }
     Some(color)
+}
+
+/// For renderers that refine a whole image internally (flames): render
+/// full-frame batches until the renderer says the image is done. Such
+/// renderers keep their own work small per submission.
+fn render_full_frame(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut dyn Renderer,
+    scene: &scene::Scene,
+    settings: StillSettings,
+    mut progress: impl FnMut(f32) -> bool,
+) -> Option<HdrImage> {
+    let StillSettings { width, height, .. } = settings;
+    let batches = renderer
+        .samples_needed(scene, width, height)
+        .unwrap_or(settings.samples)
+        .max(1);
+    let target = HdrTarget::new(device, width, height);
+    let accumulator = Accumulator::new(device, width, height);
+    for sample in 0..batches {
+        let input = FrameInput {
+            scene,
+            frame: sample,
+            sample,
+            region: Region::full(width, height),
+        };
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(device, queue, &mut encoder, &target, &input, None);
+        if sample + 1 == batches {
+            accumulator.accumulate(device, queue, &mut encoder, &target.view, 1);
+        }
+        queue.submit([encoder.finish()]);
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        if !progress((sample + 1) as f32 / batches as f32) {
+            return None;
+        }
+    }
+    Some(HdrImage {
+        width,
+        height,
+        pixels: read_buffer(device, queue, &accumulator.buffer),
+    })
 }
 
 /// Denoises a whole image in overlapping blocks, so any size fits in GPU

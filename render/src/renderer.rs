@@ -133,6 +133,19 @@ pub trait Renderer {
         false
     }
 
+    /// `true` if the renderer refines an internal state across samples
+    /// (a flame's histogram), so each output replaces the previous one
+    /// instead of being averaged with it.
+    fn accumulates_internally(&self) -> bool {
+        false
+    }
+
+    /// Samples that make a finished image, for renderers that decide it
+    /// themselves; `None` leaves it to the caller (anti-aliasing target).
+    fn samples_needed(&self, _scene: &scene::Scene, _width: u32, _height: u32) -> Option<u32> {
+        None
+    }
+
     /// Collects finished asynchronous GPU readbacks. Never blocks.
     fn poll(&mut self, _device: &wgpu::Device) {}
 
