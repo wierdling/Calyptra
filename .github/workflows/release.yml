@@ -1,0 +1,46 @@
+name: Release
+
+# Push a tag like `v0.1.0` to build and publish a GitHub Release with a
+# Windows zip. "Run workflow" from the Actions tab builds the zip as a
+# downloadable workflow artifact without publishing a release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release -p calyptra --locked
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = if ($env:GITHUB_REF_TYPE -eq 'tag') { "calyptra-$env:GITHUB_REF_NAME-windows-x64" } else { "calyptra-$($env:GITHUB_SHA.Substring(0,7))-windows-x64" }
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item target/release/calyptra.exe, README.md, LICENSE-MIT, LICENSE-APACHE $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          "PKG=$name" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PKG }}
+          path: ${{ env.PKG }}.zip
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.PKG }}.zip
+          generate_release_notes: true
