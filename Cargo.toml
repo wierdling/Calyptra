@@ -5,6 +5,7 @@ members = ["anim", "app", "color", "export", "formulas", "render", "scene"]
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 wgpu = "30"

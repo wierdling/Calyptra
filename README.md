@@ -94,3 +94,14 @@ The [user manual](docs/USER_MANUAL.md#11-command-line-rendering) lists all the f
 ## Contributing
 
 Contributions are welcome. Please open an issue or pull request on [GitHub](https://github.com/wierdling/Calyptra).
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution you intentionally submit for inclusion in the work, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
