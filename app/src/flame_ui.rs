@@ -56,6 +56,16 @@ impl FlameEditor {
                 self.selection = Selection::Xform(0);
             }
             if ui
+                .button("🎲 Random 3D")
+                .on_hover_text(
+                    "A new random flame with depth: tilted transforms, 3D variations, perspective",
+                )
+                .clicked()
+            {
+                *flame = Flame::random_3d(self.seed());
+                self.selection = Selection::Xform(0);
+            }
+            if ui
                 .button("Mutate")
                 .on_hover_text("Nudge the current flame's transforms a little")
                 .clicked()
@@ -116,11 +126,7 @@ impl FlameEditor {
             {
                 flame.xforms.push(Xform {
                     color: 1.0,
-                    affine: Affine {
-                        a: 0.5,
-                        e: 0.5,
-                        ..Affine::IDENTITY
-                    },
+                    affine: Affine::planar(0.5, 0.0, 0.0, 0.0, 0.5, 0.0),
                     ..Default::default()
                 });
                 self.selection = Selection::Xform(flame.xforms.len() - 1);
@@ -160,15 +166,33 @@ impl FlameEditor {
 }
 
 fn affine_editor(ui: &mut egui::Ui, id: &str, affine: &mut Affine) {
-    egui::Grid::new(id).num_columns(4).show(ui, |ui| {
+    let drag = |ui: &mut egui::Ui, value: &mut f32| {
+        ui.add(egui::DragValue::new(value).speed(0.005).fixed_decimals(3));
+    };
+    egui::Grid::new(id).num_columns(5).show(ui, |ui| {
+        ui.weak("");
+        for header in ["·x", "·y", "·z", "+"] {
+            ui.weak(header);
+        }
+        ui.end_row();
         ui.weak("x'");
-        for value in [&mut affine.a, &mut affine.b, &mut affine.c] {
-            ui.add(egui::DragValue::new(value).speed(0.005).fixed_decimals(3));
+        for value in [&mut affine.a, &mut affine.b, &mut affine.xz, &mut affine.c] {
+            drag(ui, value);
         }
         ui.end_row();
         ui.weak("y'");
-        for value in [&mut affine.d, &mut affine.e, &mut affine.f] {
-            ui.add(egui::DragValue::new(value).speed(0.005).fixed_decimals(3));
+        for value in [&mut affine.d, &mut affine.e, &mut affine.yz, &mut affine.f] {
+            drag(ui, value);
+        }
+        ui.end_row();
+        ui.weak("z'");
+        for value in [
+            &mut affine.zx,
+            &mut affine.zy,
+            &mut affine.zz,
+            &mut affine.zc,
+        ] {
+            drag(ui, value);
         }
         ui.end_row();
     });
@@ -320,7 +344,19 @@ fn render_settings(ui: &mut egui::Ui, flame: &mut Flame) {
             flame.camera = FlameCamera::default();
         }
     });
-    ui.small("Drag: pan · Right-drag: rotate · Wheel: zoom");
+    egui::CollapsingHeader::new("3D view")
+        .default_open(flame.camera.pitch_degrees != 0.0 || flame.camera.yaw_degrees != 0.0)
+        .show(ui, |ui| {
+            let cam = &mut flame.camera;
+            ui.add(egui::Slider::new(&mut cam.yaw_degrees, -180.0..=180.0).text("Yaw"));
+            ui.add(egui::Slider::new(&mut cam.pitch_degrees, -90.0..=90.0).text("Pitch"));
+            ui.add(egui::Slider::new(&mut cam.perspective, 0.0..=1.0).text("Perspective"));
+            ui.add(egui::Slider::new(&mut cam.depth_of_field, 0.0..=0.5).text("Depth of field"));
+            ui.add(egui::Slider::new(&mut cam.focus_depth, -2.0..=2.0).text("Focus depth"));
+            ui.add(egui::Slider::new(&mut cam.depth_fade, 0.0..=3.0).text("Depth fade"));
+            ui.small("Z terms in the transforms and 3D variations give a flame depth.");
+        });
+    ui.small("Drag: pan · Right-drag: orbit (3D) · Wheel: zoom");
 }
 
 /// 2D navigation for flames. Returns `true` while the user is navigating.
@@ -347,7 +383,9 @@ pub fn navigate(camera: &mut FlameCamera, response: &egui::Response, ctx: &egui:
         active = true;
     }
     if secondary {
-        camera.rotation_degrees += dx * 0.3;
+        // Orbit: turn around the vertical axis and tilt.
+        camera.yaw_degrees = (camera.yaw_degrees + dx * 0.3 + 180.0).rem_euclid(360.0) - 180.0;
+        camera.pitch_degrees = (camera.pitch_degrees - dy * 0.3).clamp(-90.0, 90.0);
         active = true;
     }
     if scroll != 0.0 {

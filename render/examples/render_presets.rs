@@ -74,8 +74,6 @@ fn each_preset(
 /// Flame presets followed by random flames, each with a different palette,
 /// tiled 4 across.
 fn flame_sheet(gpu: &Gpu, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    std::fs::create_dir_all(out_dir)?;
-    let (tile_w, tile_h, columns) = (400u32, 300u32, 4u32);
     let mut flames: Vec<(String, scene::flame::Flame)> = scene::flame::presets()
         .into_iter()
         .map(|(name, flame)| (name.to_owned(), flame))
@@ -83,6 +81,58 @@ fn flame_sheet(gpu: &Gpu, out_dir: &Path) -> Result<(), Box<dyn std::error::Erro
     for seed in 1..=8u64 {
         flames.push((format!("random {seed}"), scene::flame::Flame::random(seed)));
     }
+    tile_flames(gpu, out_dir, "flames.png", flames)?;
+    let flames_3d = (1..=12u64)
+        .map(|seed| {
+            (
+                format!("random 3D {seed}"),
+                scene::flame::Flame::random_3d(seed),
+            )
+        })
+        .collect();
+    tile_flames(gpu, out_dir, "flames_3d.png", flames_3d)?;
+
+    // A 3D flame with depth of field, larger.
+    let mut flame = scene::flame::Flame::random_3d(3);
+    flame.camera.depth_of_field = 0.08;
+    flame.camera.focus_depth = 0.3;
+    let mut scene = scene::Scene {
+        kind: scene::FractalKind::Flame,
+        flame,
+        ..Default::default()
+    };
+    scene.coloring.gradient = color::presets()[2].gradient.clone();
+    let (width, height) = (960, 540);
+    let settings = StillSettings {
+        width,
+        height,
+        samples: 1,
+    };
+    let mut renderer = render::FlameRenderer::new(&gpu.device);
+    let image = render_still(&gpu.device, &gpu.queue, &mut renderer, &scene, settings, |_| true)
+        .ok_or("cancelled")?;
+    let pixels: Vec<u8> = image
+        .pixels
+        .iter()
+        .flat_map(|&[r, g, b, _]| {
+            let rgb = display_transform([r, g, b], &scene.display);
+            [rgb[0], rgb[1], rgb[2], 1.0].map(|c| (c * 255.0).round() as u8)
+        })
+        .collect();
+    let path = out_dir.join("flame_3d_dof.png");
+    write_png(&path, width, height, &pixels)?;
+    println!("-> {}", path.display());
+    Ok(())
+}
+
+fn tile_flames(
+    gpu: &Gpu,
+    out_dir: &Path,
+    file_name: &str,
+    flames: Vec<(String, scene::flame::Flame)>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(out_dir)?;
+    let (tile_w, tile_h, columns) = (400u32, 300u32, 4u32);
     let palettes = color::presets();
     let rows = (flames.len() as u32).div_ceil(columns);
     let (sheet_w, sheet_h) = (tile_w * columns, tile_h * rows);
@@ -150,7 +200,7 @@ fn flame_sheet(gpu: &Gpu, out_dir: &Path) -> Result<(), Box<dyn std::error::Erro
     println!("viewport: {} samples, {lit} lit pixels", viewport.samples());
     write_png(&out_dir.join("flame_viewport.png"), 640, 360, &pixels)?;
 
-    let path = out_dir.join("flames.png");
+    let path = out_dir.join(file_name);
     write_png(&path, sheet_w, sheet_h, &sheet)?;
     println!("-> {}", path.display());
     Ok(())

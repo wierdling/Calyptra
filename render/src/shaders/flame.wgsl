@@ -6,6 +6,10 @@
 // (atomic adds: red, green, blue, count per cell). Points persist across
 // dispatches, so an image refines for as long as batches keep coming.
 //
+// Points are 3D. A 2D flame keeps z = 0 (identity z terms, 2D variations
+// pass z through), and a camera without yaw, pitch or perspective looks
+// straight down z, so 2D flames render exactly as before.
+//
 // Tone mapping is in flame_tonemap.wgsl.
 
 const PI: f32 = 3.14159265;
@@ -21,11 +25,14 @@ struct Variation {
     params: vec4<f32>,
 };
 
+// Rows of a 3×4 matrix: xyz = coefficients of (x, y, z), w = offset.
 struct Xform {
-    affine_x: vec4<f32>,    // a, b, c: x' = a x + b y + c
-    affine_y: vec4<f32>,    // d, e, f: y' = d x + e y + f
+    affine_x: vec4<f32>,    // a, b, xz, c
+    affine_y: vec4<f32>,    // d, e, yz, f
+    affine_z: vec4<f32>,    // zx, zy, zz, zc
     post_x: vec4<f32>,
     post_y: vec4<f32>,
+    post_z: vec4<f32>,
     color: f32,
     color_speed: f32,
     cumulative_weight: f32, // running sum of normalized weights, for picking
@@ -37,17 +44,21 @@ struct ChaosParams {
     hist_size: vec2<u32>,
     xform_count: u32,
     has_final: u32,
-    camera: vec4<f32>,      // center x, center y, zoom, rotation (radians)
+    camera: vec4<f32>,      // center x, center y, zoom, roll (radians)
+    // Rows of the view rotation; w = perspective, depth of field, focus depth.
+    view_x: vec4<f32>,
+    view_y: vec4<f32>,
+    view_z: vec4<f32>,
     iterations: u32,
     reset: u32,
     seed: u32,
-    _pad: u32,
+    depth_fade: f32,
 };
 
 @group(0) @binding(0) var<uniform> chaos_params: ChaosParams;
 // Transforms 0..11; index 12 is the final transform.
 @group(0) @binding(1) var<storage, read> xforms: array<Xform, 13>;
-@group(0) @binding(2) var<storage, read_write> points: array<vec4<f32>>;   // x, y, color, _
+@group(0) @binding(2) var<storage, read_write> points: array<vec4<f32>>;   // x, y, z, color
 @group(0) @binding(3) var<storage, read_write> seeds: array<u32>;
 @group(0) @binding(4) var<storage, read_write> histogram: array<atomic<u32>>;
 @group(0) @binding(5) var gradient_tex: texture_2d<f32>;
@@ -66,7 +77,44 @@ fn rand() -> f32 {
     return f32(rng_state >> 8u) / 16777216.0;
 }
 
-fn variation(kind: u32, p: vec2<f32>, params: vec4<f32>) -> vec2<f32> {
+// Variations that act on all three coordinates.
+fn variation_3d(kind: u32, p: vec3<f32>) -> vec3<f32> {
+    let r2 = max(dot(p, p), 1.0e-10);
+    switch kind {
+        case 29u: { return p / r2; }                                                // spherical3D
+        case 30u: { return sin(p); }                                                // sinusoidal3D
+        case 31u: {                                                                 // blur3D
+            // Uniform in the unit ball.
+            let u = rand() * 2.0 - 1.0;
+            let a = rand() * 2.0 * PI;
+            let s = sqrt(1.0 - u * u);
+            return pow(rand(), 1.0 / 3.0) * vec3<f32>(s * cos(a), s * sin(a), u);
+        }
+        case 32u: {                                                                 // julia3D
+            // Square root in spherical coordinates: halve both angles.
+            let r = sqrt(r2);
+            let theta = acos(clamp(p.z / r, -1.0, 1.0)) * 0.5;
+            let phi = atan2(p.y, p.x) * 0.5 + select(0.0, PI, rand() < 0.5);
+            return sqrt(r) * vec3<f32>(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+        }
+        case 33u: {                                                                 // hemisphere
+            let t = inverseSqrt(p.x * p.x + p.y * p.y + 1.0);
+            return vec3<f32>(p.xy * t, t);
+        }
+        case 28u: { return p; }                                                     // linear3D
+        default: { return p; }
+    }
+}
+
+fn variation(kind: u32, p: vec3<f32>, params: vec4<f32>) -> vec3<f32> {
+    if kind >= 28u {
+        return variation_3d(kind, p);
+    }
+    // 2D variations shape x and y and carry z along.
+    return vec3<f32>(variation_2d(kind, p.xy, params), p.z);
+}
+
+fn variation_2d(kind: u32, p: vec2<f32>, params: vec4<f32>) -> vec2<f32> {
     let x = p.x;
     let y = p.y;
     let r2 = max(dot(p, p), 1.0e-10);
@@ -137,14 +185,18 @@ fn variation(kind: u32, p: vec2<f32>, params: vec4<f32>) -> vec2<f32> {
     }
 }
 
-fn apply_xform(xf: Xform, p: vec2<f32>) -> vec2<f32> {
-    let t = vec2<f32>(dot(xf.affine_x.xy, p) + xf.affine_x.z, dot(xf.affine_y.xy, p) + xf.affine_y.z);
-    var sum = vec2<f32>(0.0);
+fn affine(x: vec4<f32>, y: vec4<f32>, z: vec4<f32>, p: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(dot(x.xyz, p) + x.w, dot(y.xyz, p) + y.w, dot(z.xyz, p) + z.w);
+}
+
+fn apply_xform(xf: Xform, p: vec3<f32>) -> vec3<f32> {
+    let t = affine(xf.affine_x, xf.affine_y, xf.affine_z, p);
+    var sum = vec3<f32>(0.0);
     for (var i = 0u; i < xf.variation_count; i++) {
         let v = xf.variations[i];
         sum += v.weight * variation(v.kind, t, v.params);
     }
-    return vec2<f32>(dot(xf.post_x.xy, sum) + xf.post_x.z, dot(xf.post_y.xy, sum) + xf.post_y.z);
+    return affine(xf.post_x, xf.post_y, xf.post_z, sum);
 }
 
 fn pick_xform() -> u32 {
@@ -157,17 +209,37 @@ fn pick_xform() -> u32 {
     return chaos_params.xform_count - 1u;
 }
 
-fn valid(p: vec2<f32>) -> bool {
+fn valid(p: vec3<f32>) -> bool {
     // Rejects NaN (x != x) and runaway points.
-    return p.x == p.x && p.y == p.y && abs(p.x) < 1.0e10 && abs(p.y) < 1.0e10;
+    return all(p == p) && all(abs(p) < vec3<f32>(1.0e10));
 }
 
-fn plot(p: vec2<f32>, color: f32) {
+fn plot(p: vec3<f32>, color: f32) {
     let cam = chaos_params.camera;
-    let q = p - cam.xy;
+    // Into camera space: centered, then rotated by yaw and pitch.
+    let q = p - vec3<f32>(cam.xy, 0.0);
+    let view = vec3<f32>(
+        dot(chaos_params.view_x.xyz, q),
+        dot(chaos_params.view_y.xyz, q),
+        dot(chaos_params.view_z.xyz, q),
+    );
+    // Perspective: points toward the viewer (larger z) appear larger.
+    let depth_scale = 1.0 - chaos_params.view_x.w * view.z;
+    if depth_scale < 1.0e-3 {
+        return;
+    }
+    var flat = view.xy / depth_scale;
+    // Depth of field: scatter points by their distance from the focal plane.
+    let dof = chaos_params.view_y.w;
+    if dof > 0.0 {
+        let radius = dof * abs(view.z - chaos_params.view_z.w) * sqrt(rand());
+        let a = rand() * 2.0 * PI;
+        flat += radius * vec2<f32>(cos(a), sin(a));
+    }
+    // Roll within the image plane.
     let c = cos(cam.w);
     let s = sin(cam.w);
-    let v = vec2<f32>(q.x * c + q.y * s, -q.x * s + q.y * c);
+    let v = vec2<f32>(flat.x * c + flat.y * s, -flat.x * s + flat.y * c);
     let size = vec2<f32>(chaos_params.hist_size);
     let half_height = size.y * 0.5;
     let pixel = vec2<f32>(size.x * 0.5 + v.x * cam.z * half_height, half_height - v.y * cam.z * half_height);
@@ -175,7 +247,9 @@ fn plot(p: vec2<f32>, color: f32) {
         return;
     }
     let cell = (u32(pixel.y) * chaos_params.hist_size.x + u32(pixel.x)) * 4u;
-    let rgb = textureSampleLevel(gradient_tex, gradient_sampler, vec2<f32>(color, 0.5), 0.0).rgb;
+    // Depth cue: points behind the focal plane (smaller z) get darker.
+    let fade = exp(-chaos_params.depth_fade * max(chaos_params.view_z.w - view.z, 0.0));
+    let rgb = fade * textureSampleLevel(gradient_tex, gradient_sampler, vec2<f32>(color, 0.5), 0.0).rgb;
     let fixed = vec3<u32>(rgb * COLOR_SCALE + 0.5);
     atomicAdd(&histogram[cell], fixed.r);
     atomicAdd(&histogram[cell + 1u], fixed.g);
@@ -193,21 +267,22 @@ fn chaos(@builtin(global_invocation_id) id: vec3<u32>) {
     var skip = 0u;
     if chaos_params.reset == 1u {
         rng_state = pcg(i ^ pcg(chaos_params.seed));
-        point = vec4<f32>(rand() * 2.0 - 1.0, rand() * 2.0 - 1.0, rand(), 0.0);
+        // z starts at 0: a 2D flame never leaves the plane.
+        point = vec4<f32>(rand() * 2.0 - 1.0, rand() * 2.0 - 1.0, 0.0, rand());
         // Let the point settle onto the attractor before plotting.
         skip = 20u;
     } else {
         rng_state = seeds[i];
     }
-    var p = point.xy;
-    var color = point.z;
+    var p = point.xyz;
+    var color = point.w;
 
     for (var n = 0u; n < chaos_params.iterations + skip; n++) {
         let xf = xforms[pick_xform()];
         p = apply_xform(xf, p);
         color = mix(color, xf.color, xf.color_speed);
         if !valid(p) {
-            p = vec2<f32>(rand() * 2.0 - 1.0, rand() * 2.0 - 1.0);
+            p = vec3<f32>(rand() * 2.0 - 1.0, rand() * 2.0 - 1.0, 0.0);
             color = rand();
             continue;
         }
@@ -224,6 +299,6 @@ fn chaos(@builtin(global_invocation_id) id: vec3<u32>) {
             plot(p, color);
         }
     }
-    points[i] = vec4<f32>(p, color, 0.0);
+    points[i] = vec4<f32>(p, color);
     seeds[i] = rng_state;
 }

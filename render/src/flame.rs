@@ -29,8 +29,10 @@ struct GpuVariation {
 struct GpuXform {
     affine_x: [f32; 4],
     affine_y: [f32; 4],
+    affine_z: [f32; 4],
     post_x: [f32; 4],
     post_y: [f32; 4],
+    post_z: [f32; 4],
     color: f32,
     color_speed: f32,
     cumulative_weight: f32,
@@ -40,9 +42,16 @@ struct GpuXform {
 
 impl GpuXform {
     fn new(xform: &Xform, cumulative_weight: f32) -> Self {
-        let rows = |t: &Affine| ([t.a, t.b, t.c, 0.0], [t.d, t.e, t.f, 0.0]);
-        let (affine_x, affine_y) = rows(&xform.affine);
-        let (post_x, post_y) = rows(&xform.post.unwrap_or(Affine::IDENTITY));
+        // Rows of the 3×4 matrix: coefficients of (x, y, z), then the offset.
+        let rows = |t: &Affine| {
+            (
+                [t.a, t.b, t.xz, t.c],
+                [t.d, t.e, t.yz, t.f],
+                [t.zx, t.zy, t.zz, t.zc],
+            )
+        };
+        let (affine_x, affine_y, affine_z) = rows(&xform.affine);
+        let (post_x, post_y, post_z) = rows(&xform.post.unwrap_or(Affine::IDENTITY));
         let mut variations = [GpuVariation::default(); Xform::MAX_VARIATIONS];
         for (gpu, v) in variations.iter_mut().zip(&xform.variations) {
             *gpu = GpuVariation {
@@ -55,8 +64,10 @@ impl GpuXform {
         Self {
             affine_x,
             affine_y,
+            affine_z,
             post_x,
             post_y,
+            post_z,
             color: xform.color.clamp(0.0, 1.0),
             color_speed: xform.color_speed.clamp(0.0, 1.0),
             cumulative_weight,
@@ -73,10 +84,13 @@ struct ChaosParams {
     xform_count: u32,
     has_final: u32,
     camera: [f32; 4],
+    view_x: [f32; 4],
+    view_y: [f32; 4],
+    view_z: [f32; 4],
     iterations: u32,
     reset: u32,
     seed: u32,
-    _pad: u32,
+    depth_fade: f32,
 }
 
 #[repr(C)]
@@ -405,6 +419,11 @@ impl Renderer for FlameRenderer {
             self.current = Some(key);
         }
         let camera = &flame.camera;
+        let rotation = camera.view_rotation();
+        let row = |i: usize, w: f64| {
+            let r = rotation[i];
+            [r[0] as f32, r[1] as f32, r[2] as f32, w as f32]
+        };
         let chaos = ChaosParams {
             hist_size,
             xform_count,
@@ -415,10 +434,13 @@ impl Renderer for FlameRenderer {
                 camera.zoom as f32,
                 camera.rotation_degrees.to_radians() as f32,
             ],
+            view_x: row(0, camera.perspective),
+            view_y: row(1, camera.depth_of_field),
+            view_z: row(2, camera.focus_depth),
             iterations: ITERATIONS,
             reset: u32::from(reset),
             seed: input.sample.wrapping_mul(0x9E37_79B9) ^ input.frame,
-            _pad: 0,
+            depth_fade: camera.depth_fade as f32,
         };
         queue.write_buffer(&self.chaos_params, 0, bytemuck::bytes_of(&chaos));
         {

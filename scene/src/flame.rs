@@ -38,10 +38,56 @@ pub enum VariationKind {
     Julian,
     Curl,
     Pdj,
+    Linear3D,
+    Spherical3D,
+    Sinusoidal3D,
+    Blur3D,
+    Julia3D,
+    Hemisphere,
 }
 
 impl VariationKind {
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 34] = [
+        Self::Linear,
+        Self::Sinusoidal,
+        Self::Spherical,
+        Self::Swirl,
+        Self::Horseshoe,
+        Self::Polar,
+        Self::Handkerchief,
+        Self::Heart,
+        Self::Disc,
+        Self::Spiral,
+        Self::Hyperbolic,
+        Self::Diamond,
+        Self::Ex,
+        Self::Julia,
+        Self::Bent,
+        Self::Fisheye,
+        Self::Exponential,
+        Self::Power,
+        Self::Cosine,
+        Self::Eyefish,
+        Self::Bubble,
+        Self::Cylinder,
+        Self::Tangent,
+        Self::Cross,
+        Self::Blur,
+        Self::Julian,
+        Self::Curl,
+        Self::Pdj,
+        Self::Linear3D,
+        Self::Spherical3D,
+        Self::Sinusoidal3D,
+        Self::Blur3D,
+        Self::Julia3D,
+        Self::Hemisphere,
+    ];
+
+    /// The 2D variations, in their original order. The random generator
+    /// draws from this fixed list so seeds (and the presets built from
+    /// them) stay stable as variations are added.
+    pub const PLANAR: [Self; 28] = [
         Self::Linear,
         Self::Sinusoidal,
         Self::Spherical,
@@ -71,6 +117,19 @@ impl VariationKind {
         Self::Curl,
         Self::Pdj,
     ];
+
+    /// Variations that move points in z (2D ones pass z through).
+    pub fn is_3d(self) -> bool {
+        matches!(
+            self,
+            Self::Linear3D
+                | Self::Spherical3D
+                | Self::Sinusoidal3D
+                | Self::Blur3D
+                | Self::Julia3D
+                | Self::Hemisphere
+        )
+    }
 
     /// Index used by the GPU shader (`flame.wgsl`); the order of [`Self::ALL`].
     pub fn index(self) -> u32 {
@@ -107,6 +166,12 @@ impl VariationKind {
             Self::Julian => "julian",
             Self::Curl => "curl",
             Self::Pdj => "pdj",
+            Self::Linear3D => "linear3D",
+            Self::Spherical3D => "spherical3D",
+            Self::Sinusoidal3D => "sinusoidal3D",
+            Self::Blur3D => "blur3D",
+            Self::Julia3D => "julia3D",
+            Self::Hemisphere => "hemisphere",
         }
     }
 
@@ -149,8 +214,18 @@ impl Variation {
     }
 }
 
-/// `x' = a·x + b·y + c`, `y' = d·x + e·y + f`.
+/// A 3D affine map (3×4 matrix):
+///
+/// ```text
+/// x' = a·x  + b·y  + xz·z + c
+/// y' = d·x  + e·y  + yz·z + f
+/// z' = zx·x + zy·y + zz·z + zc
+/// ```
+///
+/// The z terms default to "leave z alone" (`zz = 1`, others 0), so a 2D
+/// flame stays flat and loads unchanged from older files.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Affine {
     pub a: f32,
     pub b: f32,
@@ -158,6 +233,12 @@ pub struct Affine {
     pub d: f32,
     pub e: f32,
     pub f: f32,
+    pub xz: f32,
+    pub yz: f32,
+    pub zx: f32,
+    pub zy: f32,
+    pub zz: f32,
+    pub zc: f32,
 }
 
 impl Default for Affine {
@@ -174,13 +255,39 @@ impl Affine {
         d: 0.0,
         e: 1.0,
         f: 0.0,
+        xz: 0.0,
+        yz: 0.0,
+        zx: 0.0,
+        zy: 0.0,
+        zz: 1.0,
+        zc: 0.0,
     };
 
-    pub fn apply(&self, [x, y]: [f32; 2]) -> [f32; 2] {
+    /// A 2D map (z untouched).
+    pub fn planar(a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) -> Self {
+        Self {
+            a,
+            b,
+            c,
+            d,
+            e,
+            f,
+            ..Self::IDENTITY
+        }
+    }
+
+    pub fn apply(&self, [x, y, z]: [f32; 3]) -> [f32; 3] {
         [
-            self.a * x + self.b * y + self.c,
-            self.d * x + self.e * y + self.f,
+            self.a * x + self.b * y + self.xz * z + self.c,
+            self.d * x + self.e * y + self.yz * z + self.f,
+            self.zx * x + self.zy * y + self.zz * z + self.zc,
         ]
+    }
+
+    /// Uses z (a genuinely 3D map).
+    pub fn is_3d(&self) -> bool {
+        let planar = Self::planar(self.a, self.b, self.c, self.d, self.e, self.f);
+        *self != planar
     }
 }
 
@@ -215,14 +322,28 @@ impl Xform {
     pub const MAX_VARIATIONS: usize = 4;
 }
 
-/// 2D view onto the flame's plane.
+/// View onto the flame. With yaw, pitch and perspective at 0 it looks
+/// straight down the z axis: a plain 2D view.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FlameCamera {
     pub center: [f64; 2],
     /// The view is `2 / zoom` units tall.
     pub zoom: f64,
+    /// Roll: rotation within the image plane.
     pub rotation_degrees: f64,
+    /// Turn around the vertical axis (3D).
+    pub yaw_degrees: f64,
+    /// Tilt up/down (3D).
+    pub pitch_degrees: f64,
+    /// 0 = orthographic; larger = stronger perspective.
+    pub perspective: f64,
+    /// Blur of points away from the focal plane (3D depth of field).
+    pub depth_of_field: f64,
+    /// Depth of the focal plane, in the camera's depth units.
+    pub focus_depth: f64,
+    /// Darkens points behind the focal plane (a depth cue for 3D flames).
+    pub depth_fade: f64,
 }
 
 impl Default for FlameCamera {
@@ -231,7 +352,27 @@ impl Default for FlameCamera {
             center: [0.0, 0.0],
             zoom: 0.8,
             rotation_degrees: 0.0,
+            yaw_degrees: 0.0,
+            pitch_degrees: 0.0,
+            perspective: 0.0,
+            depth_of_field: 0.0,
+            focus_depth: 0.0,
+            depth_fade: 0.0,
         }
+    }
+}
+
+impl FlameCamera {
+    /// Rotation taking world points into camera space: yaw about y, then
+    /// pitch about x. Rows of a 3×3 matrix.
+    pub fn view_rotation(&self) -> [[f64; 3]; 3] {
+        let (sy, cy) = self.yaw_degrees.to_radians().sin_cos();
+        let (sp, cp) = self.pitch_degrees.to_radians().sin_cos();
+        [
+            [cy, 0.0, -sy],
+            [sp * sy, cp, sp * cy],
+            [cp * sy, -sp, cp * cy],
+        ]
     }
 }
 
@@ -291,8 +432,8 @@ impl Flame {
                     .map(|_| {
                         // Linear, parameterless ones are the bread and butter;
                         // the parametric ones add variety.
-                        let kind =
-                            VariationKind::ALL[rng.below(VariationKind::ALL.len() as u32) as usize];
+                        let kind = VariationKind::PLANAR
+                            [rng.below(VariationKind::PLANAR.len() as u32) as usize];
                         let mut variation = Variation::new(kind, rng.range(0.3, 1.0));
                         for p in variation.params.iter_mut().take(kind.params().len()) {
                             *p += rng.range(-0.5, 0.5);
@@ -312,6 +453,48 @@ impl Flame {
             .collect();
         let mut flame = Self::base(xforms);
         flame.camera.zoom = 0.6;
+        flame
+    }
+
+    /// A random 3D flame: like [`Self::random`] but with tilted transforms,
+    /// 3D variations and a perspective camera looking in from an angle.
+    pub fn random_3d(seed: u64) -> Self {
+        let mut flame = Self::random(seed);
+        let mut rng = Rng::new(seed ^ 0x3D3D_3D3D);
+        // Blur3D is left out: it fills space with haze.
+        const KINDS_3D: [VariationKind; 5] = [
+            VariationKind::Linear3D,
+            VariationKind::Spherical3D,
+            VariationKind::Sinusoidal3D,
+            VariationKind::Julia3D,
+            VariationKind::Hemisphere,
+        ];
+        for xform in &mut flame.xforms {
+            // Modest tilts: enough to give the attractor depth without
+            // flinging points at the camera.
+            let a = &mut xform.affine;
+            a.xz = rng.range(-0.35, 0.35);
+            a.yz = rng.range(-0.35, 0.35);
+            a.zx = rng.range(-0.35, 0.35);
+            a.zy = rng.range(-0.35, 0.35);
+            a.zz = rng.range(0.4, 0.8);
+            a.zc = rng.range(-0.3, 0.3);
+            let kind = KINDS_3D[rng.below(KINDS_3D.len() as u32) as usize];
+            if xform.variations.len() < Xform::MAX_VARIATIONS {
+                xform
+                    .variations
+                    .push(Variation::new(kind, rng.range(0.3, 0.8)));
+            }
+        }
+        flame.camera = FlameCamera {
+            zoom: 0.4,
+            yaw_degrees: rng.range(-60.0, 60.0).into(),
+            pitch_degrees: rng.range(-60.0, -25.0).into(),
+            perspective: rng.range(0.1, 0.25).into(),
+            depth_of_field: 0.0,
+            depth_fade: 0.6,
+            ..Default::default()
+        };
         flame
     }
 
@@ -338,14 +521,14 @@ fn random_affine(rng: &mut Rng) -> Affine {
     let angle = rng.range(0.0, std::f32::consts::TAU);
     let shear = rng.range(-0.4, 0.4);
     let (sin, cos) = angle.sin_cos();
-    Affine {
-        a: scale * cos,
-        b: -scale * sin + shear,
-        c: rng.range(-1.0, 1.0),
-        d: scale * sin,
-        e: scale * cos,
-        f: rng.range(-1.0, 1.0),
-    }
+    Affine::planar(
+        scale * cos,
+        -scale * sin + shear,
+        rng.range(-1.0, 1.0),
+        scale * sin,
+        scale * cos,
+        rng.range(-1.0, 1.0),
+    )
 }
 
 /// Built-in flames.
@@ -358,7 +541,7 @@ pub fn presets() -> Vec<(&'static str, Flame)> {
         variations,
         post: None,
     };
-    let affine = |a, b, c, d, e, f| Affine { a, b, c, d, e, f };
+    let affine = Affine::planar;
     let v = Variation::new;
     use VariationKind::*;
 
@@ -431,6 +614,8 @@ pub fn presets() -> Vec<(&'static str, Flame)> {
         ("Golden swirl", Flame::random(2)),
         ("Electric web", Flame::random(3)),
         ("Nebula", Flame::random(6)),
+        ("3D plume", Flame::random_3d(3)),
+        ("Fire feather", Flame::random_3d(6)),
         ("Julian bloom", julian_bloom),
         ("Sierpinski triangle", sierpinski),
     ]
@@ -493,6 +678,47 @@ mod tests {
     }
 
     #[test]
+    fn random_flames_never_change_for_a_seed() {
+        // Presets are built from seeds: pin one down so the generator
+        // cannot drift (e.g. when variations are added).
+        let kinds: Vec<&str> = Flame::random(2)
+            .xforms
+            .iter()
+            .flat_map(|x| x.variations.iter().map(|v| v.kind.name()))
+            .collect();
+        assert_eq!(kinds, ["heart", "fisheye", "curl", "horseshoe"]);
+    }
+
+    #[test]
+    fn random_3d_flames_use_depth() {
+        for seed in 0..20 {
+            let flame = Flame::random_3d(seed);
+            assert!(flame.xforms.iter().any(|x| x.affine.is_3d()));
+            assert!(flame.camera.pitch_degrees < 0.0);
+            for xform in &flame.xforms {
+                assert!(xform.variations.len() <= Xform::MAX_VARIATIONS);
+            }
+        }
+    }
+
+    #[test]
+    fn default_camera_is_a_plain_2d_view() {
+        let rotation = FlameCamera::default().view_rotation();
+        assert_eq!(
+            rotation,
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        );
+    }
+
+    #[test]
+    fn old_2d_affines_load_as_flat() {
+        let json = r#"{"a": 0.5, "b": 0.0, "c": 0.1, "d": 0.0, "e": 0.5, "f": 0.2}"#;
+        let affine: Affine = serde_json::from_str(json).unwrap();
+        assert_eq!(affine.zz, 1.0);
+        assert!(!affine.is_3d());
+    }
+
+    #[test]
     fn presets_fit_the_gpu_limits() {
         for (name, flame) in presets() {
             assert!(flame.xforms.len() <= Flame::MAX_XFORMS, "{name}");
@@ -504,14 +730,11 @@ mod tests {
 
     #[test]
     fn affine_applies_row_by_row() {
-        let t = Affine {
-            a: 2.0,
-            b: 0.0,
-            c: 1.0,
-            d: 0.0,
-            e: 3.0,
-            f: -1.0,
-        };
-        assert_eq!(t.apply([1.0, 1.0]), [3.0, 2.0]);
+        let t = Affine::planar(2.0, 0.0, 1.0, 0.0, 3.0, -1.0);
+        assert_eq!(t.apply([1.0, 1.0, 5.0]), [3.0, 2.0, 5.0]);
+        assert!(!t.is_3d());
+        let tilted = Affine { zy: 0.5, ..t };
+        assert_eq!(tilted.apply([1.0, 1.0, 5.0])[2], 5.5);
+        assert!(tilted.is_3d());
     }
 }

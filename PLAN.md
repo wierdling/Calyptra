@@ -174,8 +174,15 @@ every preset headlessly to `renders/presets/`.
   1080p at quality 400 with 2x supersampling: ~6 s on the Iris Xe.
 - UI: 3D / Flame switch, transform editor, Random / Mutate, 2D navigation.
   Flames animate and export like 3D scenes.
+- 3D flames (JWildfire-style): affine maps are 3×4 (z terms default to
+  identity, so 2D flames are unchanged), 6 3D variations (linear3D,
+  spherical3D, sinusoidal3D, blur3D, julia3D, hemisphere; 2D variations
+  carry z), camera yaw / pitch / perspective, point-scatter depth of field
+  and depth fade. Random 3D generator; right-drag orbits.
+- Random flame seeds are pinned by a test (`PLANAR` variation list), so
+  seed-based presets never drift.
 - Not done: density estimation (adaptive blur of sparse areas), import of
-  Apophysis / JWildfire `.flame` files, 3D flames.
+  Apophysis / JWildfire `.flame` files.
 
 ## Environment setup
 
