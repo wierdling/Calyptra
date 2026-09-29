@@ -181,8 +181,29 @@ every preset headlessly to `renders/presets/`.
   and depth fade. Random 3D generator; right-drag orbits.
 - Random flame seeds are pinned by a test (`PLANAR` variation list), so
   seed-based presets never drift.
-- Not done: density estimation (adaptive blur of sparse areas), import of
-  Apophysis / JWildfire `.flame` files.
+- `.flame` import/export (`export::flame_file`): flam3 XML as written by
+  Apophysis, JWildfire and flam3. Column-wise `coefs`, `symmetry` /
+  `color_speed`, parametric variations (`julian_power`, …), final and post
+  transforms, hex and `<color>` palettes, camera `center`/`scale`/`zoom`/
+  `rotate`. flam3's y-down convention is mirrored exactly through the final
+  transform's post-affine. Unsupported variations and limits (4 variations,
+  12 transforms) produce warnings. Our 3D terms and camera use `fractals_*`
+  attributes; our files round-trip exactly. The CLI renders `.flame` files
+  directly.
+- Apophysis 2.08 3D hack / JWildfire compatibility, checked against
+  Apophysis renders (`TestFlames/`):
+  - Camera `cam_pitch`/`cam_yaw` in radians, their rotation convention
+    (yaw spins the flame plane, pitch tilts it), view center applied after
+    projection; `cam_perspective`.
+  - `preserve_z`: 2D variations carry z in Apophysis 3D hack (and our own
+    flames), zero it in JWildfire unless the file says otherwise.
+  - julia3D with integer `power` (JWildfire's formula); separation, zcone,
+    ztranslate, zscale; `pre_blur` as a true pre-variation.
+  - Brightness: ours = Apophysis × 1.4 × 2^zoom (Apophysis doesn't
+    normalize away the extra samples it draws when zoomed); fitted.
+    `fractals_brightness` keeps our own value exact.
+  - A file's `quality` is ignored (usually a preview setting).
+- Not done: density estimation (adaptive blur of sparse areas).
 
 ## Random 3D fractals notes
 

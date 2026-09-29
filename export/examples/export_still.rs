@@ -1,6 +1,6 @@
 //! Command-line still export, the same path as the app's Export window.
 //!
-//!     cargo run --release -p export --example export_still -- OUT.(png|exr) [WIDTH HEIGHT SAMPLES] [--scene SCENE.json|png] [--png8]
+//!     cargo run --release -p export --example export_still -- OUT.(png|exr) [WIDTH HEIGHT SAMPLES] [--scene SCENE.json|png|flame] [--png8]
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -32,7 +32,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => ImageFormat::Png16,
     };
 
+    let is_flame_file = |p: &PathBuf| {
+        p.extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("flame"))
+    };
     let mut scene = match &scene_path {
+        // Apophysis / JWildfire flames render with their own palette.
+        Some(path) if is_flame_file(path) => {
+            let imported = export::import_flames(path)?.remove(0);
+            for warning in &imported.warnings {
+                eprintln!("warning: {warning}");
+            }
+            let mut scene = scene::Scene {
+                kind: scene::FractalKind::Flame,
+                flame: imported.flame,
+                ..Default::default()
+            };
+            scene.coloring.gradient = imported.gradient;
+            scene
+        }
         Some(path) => export::load_scene(path)?,
         None => scene::Scene::default(),
     };

@@ -1,9 +1,11 @@
 //! Writing finished images and reading/writing scene files.
 
+mod flame_file;
 mod image;
 mod movie;
 mod scene_file;
 
+pub use flame_file::{ImportedFlame, export_flame, import_flames};
 pub use image::{ImageFormat, save_image};
 pub use movie::{MovieEvent, MovieSettings, VideoCodec, ffmpeg_version, render_movie};
 pub use scene_file::{Project, load_project, load_scene, save_scene, scene_to_json};
@@ -15,6 +17,7 @@ pub enum ExportError {
     Exr(String),
     Scene(String),
     Movie(String),
+    Flame(String),
     Cancelled,
 }
 
@@ -26,6 +29,7 @@ impl std::fmt::Display for ExportError {
             Self::Exr(e) => write!(f, "EXR: {e}"),
             Self::Scene(e) => write!(f, "scene file: {e}"),
             Self::Movie(e) => write!(f, "{e}"),
+            Self::Flame(e) => write!(f, ".flame file: {e}"),
             Self::Cancelled => write!(f, "cancelled"),
         }
     }

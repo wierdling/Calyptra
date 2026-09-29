@@ -44,10 +44,15 @@ pub enum VariationKind {
     Blur3D,
     Julia3D,
     Hemisphere,
+    Separation,
+    ZCone,
+    ZTranslate,
+    ZScale,
+    PreBlur,
 }
 
 impl VariationKind {
-    pub const ALL: [Self; 34] = [
+    pub const ALL: [Self; 39] = [
         Self::Linear,
         Self::Sinusoidal,
         Self::Spherical,
@@ -82,6 +87,11 @@ impl VariationKind {
         Self::Blur3D,
         Self::Julia3D,
         Self::Hemisphere,
+        Self::Separation,
+        Self::ZCone,
+        Self::ZTranslate,
+        Self::ZScale,
+        Self::PreBlur,
     ];
 
     /// The 2D variations, in their original order. The random generator
@@ -128,7 +138,16 @@ impl VariationKind {
                 | Self::Blur3D
                 | Self::Julia3D
                 | Self::Hemisphere
+                | Self::ZCone
+                | Self::ZTranslate
+                | Self::ZScale
         )
+    }
+
+    /// Applied to the transformed point before the other variations
+    /// (Apophysis `pre_` variations), rather than summed with them.
+    pub fn is_pre(self) -> bool {
+        matches!(self, Self::PreBlur)
     }
 
     /// Index used by the GPU shader (`flame.wgsl`); the order of [`Self::ALL`].
@@ -172,6 +191,11 @@ impl VariationKind {
             Self::Blur3D => "blur3D",
             Self::Julia3D => "julia3D",
             Self::Hemisphere => "hemisphere",
+            Self::Separation => "separation",
+            Self::ZCone => "zcone",
+            Self::ZTranslate => "ztranslate",
+            Self::ZScale => "zscale",
+            Self::PreBlur => "pre_blur",
         }
     }
 
@@ -181,6 +205,9 @@ impl VariationKind {
             Self::Julian => &[("power", 3.0), ("dist", 1.0)],
             Self::Curl => &[("c1", 0.5), ("c2", 0.0)],
             Self::Pdj => &[("a", 1.2), ("b", -1.8), ("c", 2.1), ("d", -1.4)],
+            // Integer power, as in JWildfire / Apophysis 3D hack.
+            Self::Julia3D => &[("power", 2.0)],
+            Self::Separation => &[("x", 1.0), ("y", 1.0), ("xinside", 0.0), ("yinside", 0.0)],
             _ => &[],
         }
     }
@@ -363,15 +390,20 @@ impl Default for FlameCamera {
 }
 
 impl FlameCamera {
-    /// Rotation taking world points into camera space: yaw about y, then
-    /// pitch about x. Rows of a 3×3 matrix.
+    /// Rotation taking flame points into camera space (rows of a 3×3
+    /// matrix): yaw spins the flame's plane about z, pitch tilts it about
+    /// x, as in Apophysis 3D hack and JWildfire.
+    ///
+    /// Their matrix is written for flam3's y-down plane; conjugating it by
+    /// the y mirror (see the `.flame` importer) gives this y-up form, so an
+    /// imported flame keeps its angles and looks the same.
     pub fn view_rotation(&self) -> [[f64; 3]; 3] {
-        let (sy, cy) = self.yaw_degrees.to_radians().sin_cos();
+        let (sy, cy) = (-self.yaw_degrees.to_radians()).sin_cos();
         let (sp, cp) = self.pitch_degrees.to_radians().sin_cos();
         [
-            [cy, 0.0, -sy],
-            [sp * sy, cp, sp * cy],
-            [cp * sy, -sp, cp * cy],
+            [cy, sy, 0.0],
+            [-cp * sy, cp * cy, sp],
+            [sp * sy, -sp * cy, cp],
         ]
     }
 }
@@ -393,6 +425,10 @@ pub struct Flame {
     pub vibrancy: f32,
     /// Linear RGB.
     pub background: [f32; 3],
+    /// 2D variations carry z through (scaled by their weight). Off, z comes
+    /// only from 3D variations, as in Apophysis 3D hack and JWildfire's
+    /// default.
+    pub preserve_z: bool,
 }
 
 impl Default for Flame {
@@ -419,6 +455,7 @@ impl Flame {
             gamma: 3.0,
             vibrancy: 1.0,
             background: [0.0, 0.0, 0.0],
+            preserve_z: true,
         }
     }
 
@@ -697,6 +734,23 @@ mod tests {
             assert!(flame.camera.pitch_degrees < 0.0);
             for xform in &flame.xforms {
                 assert!(xform.variations.len() <= Xform::MAX_VARIATIONS);
+            }
+        }
+    }
+
+    #[test]
+    fn view_rotation_is_a_rotation() {
+        let camera = FlameCamera {
+            yaw_degrees: -128.0,
+            pitch_degrees: 53.0,
+            ..Default::default()
+        };
+        let m = camera.view_rotation();
+        for i in 0..3 {
+            for j in 0..3 {
+                let dot: f64 = (0..3).map(|k| m[i][k] * m[j][k]).sum();
+                let expected = if i == j { 1.0 } else { 0.0 };
+                assert!((dot - expected).abs() < 1e-12, "rows {i} {j}");
             }
         }
     }

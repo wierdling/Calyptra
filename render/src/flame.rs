@@ -91,6 +91,8 @@ struct ChaosParams {
     reset: u32,
     seed: u32,
     depth_fade: f32,
+    preserve_z: u32,
+    _pad: [u32; 3],
 }
 
 #[repr(C)]
@@ -441,6 +443,8 @@ impl Renderer for FlameRenderer {
             reset: u32::from(reset),
             seed: input.sample.wrapping_mul(0x9E37_79B9) ^ input.frame,
             depth_fade: camera.depth_fade as f32,
+            preserve_z: u32::from(flame.preserve_z),
+            _pad: [0; 3],
         };
         queue.write_buffer(&self.chaos_params, 0, bytemuck::bytes_of(&chaos));
         {

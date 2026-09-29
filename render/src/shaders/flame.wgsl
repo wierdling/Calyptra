@@ -53,6 +53,10 @@ struct ChaosParams {
     reset: u32,
     seed: u32,
     depth_fade: f32,
+    preserve_z: u32,        // 1: 2D variations carry z (weighted); 0: they zero it
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 };
 
 @group(0) @binding(0) var<uniform> chaos_params: ChaosParams;
@@ -78,7 +82,7 @@ fn rand() -> f32 {
 }
 
 // Variations that act on all three coordinates.
-fn variation_3d(kind: u32, p: vec3<f32>) -> vec3<f32> {
+fn variation_3d(kind: u32, p: vec3<f32>, params: vec4<f32>) -> vec3<f32> {
     let r2 = max(dot(p, p), 1.0e-10);
     switch kind {
         case 29u: { return p / r2; }                                                // spherical3D
@@ -91,27 +95,58 @@ fn variation_3d(kind: u32, p: vec3<f32>) -> vec3<f32> {
             return pow(rand(), 1.0 / 3.0) * vec3<f32>(s * cos(a), s * sin(a), u);
         }
         case 32u: {                                                                 // julia3D
-            // Square root in spherical coordinates: halve both angles.
-            let r = sqrt(r2);
-            let theta = acos(clamp(p.z / r, -1.0, 1.0)) * 0.5;
-            let phi = atan2(p.y, p.x) * 0.5 + select(0.0, PI, rand() < 0.5);
-            return sqrt(r) * vec3<f32>(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+            // JWildfire / Apophysis 3D hack, with an integer power.
+            let power = select(round(params.x), 2.0, abs(round(params.x)) < 1.0);
+            let abs_power = abs(power);
+            let c_power = (1.0 / power - 1.0) * 0.5;
+            let z = p.z / abs_power;
+            let r2d = p.x * p.x + p.y * p.y;
+            let r = pow(max(r2d + z * z, 1.0e-20), c_power);
+            let r_xy = r * sqrt(r2d);
+            let branch = floor(rand() * abs_power);
+            let angle = (atan2(p.y, p.x) + 2.0 * PI * branch) / power;
+            return vec3<f32>(r_xy * cos(angle), r_xy * sin(angle), r * z);
         }
         case 33u: {                                                                 // hemisphere
             let t = inverseSqrt(p.x * p.x + p.y * p.y + 1.0);
             return vec3<f32>(p.xy * t, t);
         }
+        case 35u: { return vec3<f32>(0.0, 0.0, length(p.xy)); }                     // zcone
+        case 36u: { return vec3<f32>(0.0, 0.0, 1.0); }                              // ztranslate
+        case 37u: { return vec3<f32>(0.0, 0.0, p.z); }                              // zscale
         case 28u: { return p; }                                                     // linear3D
         default: { return p; }
     }
 }
 
+fn is_3d(kind: u32) -> bool {
+    return (kind >= 28u && kind <= 33u) || (kind >= 35u && kind <= 37u);
+}
+
 fn variation(kind: u32, p: vec3<f32>, params: vec4<f32>) -> vec3<f32> {
-    if kind >= 28u {
-        return variation_3d(kind, p);
+    if is_3d(kind) {
+        return variation_3d(kind, p, params);
     }
-    // 2D variations shape x and y and carry z along.
-    return vec3<f32>(variation_2d(kind, p.xy, params), p.z);
+    // 2D variations shape x and y; z passes through only with preserve_z.
+    let z = select(0.0, p.z, chaos_params.preserve_z == 1u);
+    return vec3<f32>(variation_2d(kind, p.xy, params), z);
+}
+
+// Pre-variations adjust the transformed point before the others run.
+fn pre_variation(kind: u32, p: vec3<f32>) -> vec3<f32> {
+    switch kind {
+        case 38u: {                                                                 // pre_blur
+            // A Gaussian nudge in the plane.
+            let r = rand() + rand() + rand() + rand() - 2.0;
+            let a = rand() * 2.0 * PI;
+            return vec3<f32>(r * cos(a), r * sin(a), 0.0);
+        }
+        default: { return vec3<f32>(0.0); }
+    }
+}
+
+fn is_pre(kind: u32) -> bool {
+    return kind == 38u;
 }
 
 fn variation_2d(kind: u32, p: vec2<f32>, params: vec4<f32>) -> vec2<f32> {
@@ -178,6 +213,14 @@ fn variation_2d(kind: u32, p: vec2<f32>, params: vec4<f32>) -> vec2<f32> {
             let t2 = params.x * y + 2.0 * params.y * x * y;
             return vec2<f32>(x * t1 + y * t2, y * t1 - x * t2) / max(t1 * t1 + t2 * t2, 1.0e-10);
         }
+        case 34u: {                                                                 // separation
+            let sx = params.x * params.x;
+            let sy = params.y * params.y;
+            return vec2<f32>(
+                select(-(sqrt(x * x + sx) + x * params.z), sqrt(x * x + sx) - x * params.z, x > 0.0),
+                select(-(sqrt(y * y + sy) + y * params.w), sqrt(y * y + sy) - y * params.w, y > 0.0),
+            );
+        }
         case 27u: {                                                                 // pdj
             return vec2<f32>(sin(params.x * y) - cos(params.y * x), sin(params.z * x) - cos(params.w * y));
         }
@@ -190,11 +233,19 @@ fn affine(x: vec4<f32>, y: vec4<f32>, z: vec4<f32>, p: vec3<f32>) -> vec3<f32> {
 }
 
 fn apply_xform(xf: Xform, p: vec3<f32>) -> vec3<f32> {
-    let t = affine(xf.affine_x, xf.affine_y, xf.affine_z, p);
+    var t = affine(xf.affine_x, xf.affine_y, xf.affine_z, p);
+    for (var i = 0u; i < xf.variation_count; i++) {
+        let v = xf.variations[i];
+        if is_pre(v.kind) {
+            t += v.weight * pre_variation(v.kind, t);
+        }
+    }
     var sum = vec3<f32>(0.0);
     for (var i = 0u; i < xf.variation_count; i++) {
         let v = xf.variations[i];
-        sum += v.weight * variation(v.kind, t, v.params);
+        if !is_pre(v.kind) {
+            sum += v.weight * variation(v.kind, t, v.params);
+        }
     }
     return affine(xf.post_x, xf.post_y, xf.post_z, sum);
 }
@@ -216,12 +267,12 @@ fn valid(p: vec3<f32>) -> bool {
 
 fn plot(p: vec3<f32>, color: f32) {
     let cam = chaos_params.camera;
-    // Into camera space: centered, then rotated by yaw and pitch.
-    let q = p - vec3<f32>(cam.xy, 0.0);
+    // Into camera space: rotated by yaw and pitch. The view center is
+    // applied after projection, in the image plane (as flam3 does).
     let view = vec3<f32>(
-        dot(chaos_params.view_x.xyz, q),
-        dot(chaos_params.view_y.xyz, q),
-        dot(chaos_params.view_z.xyz, q),
+        dot(chaos_params.view_x.xyz, p),
+        dot(chaos_params.view_y.xyz, p),
+        dot(chaos_params.view_z.xyz, p),
     );
     // Perspective: points toward the viewer (larger z) appear larger.
     let depth_scale = 1.0 - chaos_params.view_x.w * view.z;
@@ -236,6 +287,7 @@ fn plot(p: vec3<f32>, color: f32) {
         let a = rand() * 2.0 * PI;
         flat += radius * vec2<f32>(cos(a), sin(a));
     }
+    flat -= cam.xy;
     // Roll within the image plane.
     let c = cos(cam.w);
     let s = sin(cam.w);

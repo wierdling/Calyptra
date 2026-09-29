@@ -68,6 +68,10 @@ pub struct FractalApp {
     wgpu: Option<egui_wgpu::RenderState>,
     /// Outcome of the last random search, shown under the buttons.
     random_message: Option<String>,
+    /// Flames from a multi-flame file, waiting for the user to pick one.
+    flame_choices: Vec<export::ImportedFlame>,
+    /// Outcome of the last .flame import/export.
+    flame_file_message: Option<Result<String, String>>,
     next_seed: u64,
     library: Library,
     shader_key: Option<ShaderKey>,
@@ -135,6 +139,8 @@ impl FractalApp {
             random_job: None,
             wgpu: None,
             random_message: None,
+            flame_choices: Vec::new(),
+            flame_file_message: None,
             next_seed: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(1, |d| d.as_nanos() as u64),
@@ -208,6 +214,7 @@ impl FractalApp {
                 egui::CollapsingHeader::new("Flame")
                     .default_open(true)
                     .show(ui, |ui| {
+                        self.flame_file_buttons(ui);
                         let before = self.scene.clone();
                         if self.flame_editor.ui(ui, &mut self.scene.flame) {
                             self.history.record(&before, &self.scene);
@@ -355,6 +362,131 @@ impl FractalApp {
         });
         if let Some(message) = &self.random_message {
             ui.weak(message);
+        }
+    }
+
+    fn flame_file_buttons(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui
+                .button("Import .flame…")
+                .on_hover_text("Apophysis, JWildfire or flam3 files")
+                .clicked()
+            {
+                self.import_flame_file();
+            }
+            if ui.button("Export .flame…").clicked() {
+                self.export_flame_file();
+            }
+        });
+        match &self.flame_file_message {
+            Some(Ok(message)) => {
+                ui.weak(message);
+            }
+            Some(Err(message)) => {
+                ui.colored_label(ui.visuals().error_fg_color, message);
+            }
+            None => {}
+        }
+    }
+
+    fn import_flame_file(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Import flame")
+            .add_filter("Flame files", &["flame", "flam3", "xml"])
+            .pick_file()
+        else {
+            return;
+        };
+        match export::import_flames(&path) {
+            Ok(mut flames) if flames.len() == 1 => self.apply_imported_flame(flames.remove(0)),
+            Ok(flames) => {
+                self.flame_file_message = Some(Ok(format!(
+                    "{} flames in {}: pick one",
+                    flames.len(),
+                    path.display()
+                )));
+                self.flame_choices = flames;
+            }
+            Err(error) => self.flame_file_message = Some(Err(error.to_string())),
+        }
+    }
+
+    fn apply_imported_flame(&mut self, imported: export::ImportedFlame) {
+        let before = self.scene.clone();
+        self.scene.kind = FractalKind::Flame;
+        self.scene.flame = imported.flame;
+        self.scene.coloring.gradient = imported.gradient;
+        self.history.record(&before, &self.scene);
+        self.flame_choices.clear();
+        self.flame_file_message = Some(if imported.warnings.is_empty() {
+            Ok(format!("Imported \"{}\"", imported.name))
+        } else {
+            Ok(format!(
+                "Imported \"{}\" with approximations:
+• {}",
+                imported.name,
+                imported.warnings.join(
+                    "
+• "
+                )
+            ))
+        });
+    }
+
+    fn export_flame_file(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Export flame")
+            .set_file_name("fractal.flame")
+            .add_filter("Flame files", &["flame"])
+            .save_file()
+        else {
+            return;
+        };
+        let name = path
+            .file_stem()
+            .map_or_else(|| "flame".to_owned(), |s| s.to_string_lossy().into_owned());
+        self.flame_file_message = Some(
+            export::export_flame(
+                &path,
+                &name,
+                &self.scene.flame,
+                &self.scene.coloring.gradient,
+            )
+            .map(|()| format!("Saved {}", path.display()))
+            .map_err(|e| e.to_string()),
+        );
+    }
+
+    /// Picker for files holding several flames.
+    fn flame_choice_window(&mut self, ctx: &egui::Context) {
+        if self.flame_choices.is_empty() {
+            return;
+        }
+        let mut chosen = None;
+        let mut open = true;
+        egui::Window::new("Choose a flame")
+            .open(&mut open)
+            .collapsible(false)
+            .default_height(400.0)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for (index, flame) in self.flame_choices.iter().enumerate() {
+                        let label = if flame.warnings.is_empty() {
+                            flame.name.clone()
+                        } else {
+                            format!("{} ⚠", flame.name)
+                        };
+                        if ui.selectable_label(false, label).clicked() {
+                            chosen = Some(index);
+                        }
+                    }
+                });
+            });
+        if let Some(index) = chosen {
+            let flame = self.flame_choices.swap_remove(index);
+            self.apply_imported_flame(flame);
+        } else if !open {
+            self.flame_choices.clear();
         }
     }
 
@@ -903,6 +1035,7 @@ impl eframe::App for FractalApp {
                 viewport_gpu_ms: self.viewport.gpu_timings().map(|t| t.render_ms),
             };
             self.export_dialog.ui(root.ctx(), export);
+            self.flame_choice_window(root.ctx());
             self.movie_dialog
                 .ui(root.ctx(), &rs.device, &rs.queue, &self.animation);
         }
