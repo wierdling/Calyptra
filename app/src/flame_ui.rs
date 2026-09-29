@@ -35,7 +35,10 @@ impl FlameEditor {
         self.next_seed
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, flame: &mut Flame) {
+    /// Returns `true` if a generator (preset, Random, Mutate) replaced the
+    /// flame, for the app's history.
+    pub fn ui(&mut self, ui: &mut egui::Ui, flame: &mut Flame) -> bool {
+        let mut generated = false;
         ui.horizontal(|ui| {
             egui::ComboBox::from_id_salt("flame preset")
                 .selected_text("Presets…")
@@ -44,6 +47,7 @@ impl FlameEditor {
                         if ui.selectable_label(false, name).clicked() {
                             *flame = preset;
                             self.selection = Selection::Xform(0);
+                            generated = true;
                         }
                     }
                 });
@@ -54,6 +58,7 @@ impl FlameEditor {
             {
                 *flame = Flame::random(self.seed());
                 self.selection = Selection::Xform(0);
+                generated = true;
             }
             if ui
                 .button("🎲 Random 3D")
@@ -64,6 +69,7 @@ impl FlameEditor {
             {
                 *flame = Flame::random_3d(self.seed());
                 self.selection = Selection::Xform(0);
+                generated = true;
             }
             if ui
                 .button("Mutate")
@@ -71,6 +77,7 @@ impl FlameEditor {
                 .clicked()
             {
                 *flame = flame.mutated(self.seed(), 0.08);
+                generated = true;
             }
         });
 
@@ -90,6 +97,7 @@ impl FlameEditor {
         }
         ui.separator();
         render_settings(ui, flame);
+        generated
     }
 
     fn transform_list(&mut self, ui: &mut egui::Ui, flame: &mut Flame) {

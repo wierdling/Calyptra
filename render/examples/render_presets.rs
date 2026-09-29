@@ -19,6 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let palettes = std::env::args().any(|a| a == "--palettes");
     let path_trace = std::env::args().any(|a| a == "--pathtrace");
     let flames = std::env::args().any(|a| a == "--flames");
+    let random = std::env::args().any(|a| a == "--random");
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
@@ -33,7 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gpu = Gpu { device, queue };
 
     let out_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../renders");
-    if flames {
+    if random {
+        random_sheet(&gpu, &out_dir)
+    } else if flames {
         flame_sheet(&gpu, &out_dir)
     } else if palettes {
         palette_sheet(&gpu, &out_dir)
@@ -69,6 +72,80 @@ fn each_preset(
         println!("{name} ({elapsed:.1?}) -> {}", path.display());
     }
     Ok(())
+}
+
+/// Measures the presets (known good), then runs the random search for 12
+/// seeds and tiles the results.
+fn random_sheet(gpu: &Gpu, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(out_dir)?;
+    let library = formulas::Library::builtin()?;
+    let mut renderer = RaymarchRenderer::new(&gpu.device);
+    println!("presets:");
+    for preset in formulas::presets() {
+        let name = preset.name;
+        let mut scene = scene::Scene::default();
+        preset.apply(&mut scene);
+        library.normalize(&mut scene.fractal);
+        renderer.set_de_source(&gpu.device, formulas::compose(&scene.fractal, &library)?);
+        let stats = render::view_stats(&gpu.device, &gpu.queue, &mut renderer, &scene);
+        println!("  {name:32} {}", describe(&stats));
+    }
+
+    let (tile_w, tile_h, columns) = (400u32, 300u32, 4u32);
+    let seeds: Vec<u64> = (1..=12).collect();
+    let rows = (seeds.len() as u32).div_ceil(columns);
+    let (sheet_w, sheet_h) = (tile_w * columns, tile_h * rows);
+    let mut sheet = vec![0u8; (sheet_w * sheet_h * 4) as usize];
+    println!("random:");
+    for (index, &seed) in seeds.iter().enumerate() {
+        let start = std::time::Instant::now();
+        let result = render::find_random_fractal(
+            &gpu.device,
+            &gpu.queue,
+            &library,
+            &scene::Scene::default(),
+            seed,
+            |_| true,
+        )
+        .ok_or("no candidate")?;
+        let formulas: Vec<&str> = result
+            .scene
+            .fractal
+            .slots
+            .iter()
+            .map(|s| s.formula.as_str())
+            .collect();
+        println!(
+            "  seed {seed:2}: {} after {:2} tries in {:.1?} {} {:?}",
+            if result.accepted { "ok  " } else { "best" },
+            result.attempts,
+            start.elapsed(),
+            describe(&result.stats),
+            formulas,
+        );
+        let tile = render(gpu, &mut renderer, &result.scene, tile_w, tile_h)?;
+        let (x0, y0) = (
+            (index as u32 % columns) * tile_w,
+            (index as u32 / columns) * tile_h,
+        );
+        for row in 0..tile_h {
+            let src = (row * tile_w * 4) as usize;
+            let dst = (((y0 + row) * sheet_w + x0) * 4) as usize;
+            sheet[dst..dst + (tile_w * 4) as usize]
+                .copy_from_slice(&tile[src..src + (tile_w * 4) as usize]);
+        }
+    }
+    let path = out_dir.join("random.png");
+    write_png(&path, sheet_w, sheet_h, &sheet)?;
+    println!("-> {}", path.display());
+    Ok(())
+}
+
+fn describe(stats: &render::ViewStats) -> String {
+    format!(
+        "coverage {:.2} detail {:.3} spread {:.2} extent {:.2} border {:.2}",
+        stats.coverage, stats.detail, stats.spread, stats.extent, stats.border
+    )
 }
 
 /// Flame presets followed by random flames, each with a different palette,
@@ -109,8 +186,15 @@ fn flame_sheet(gpu: &Gpu, out_dir: &Path) -> Result<(), Box<dyn std::error::Erro
         samples: 1,
     };
     let mut renderer = render::FlameRenderer::new(&gpu.device);
-    let image = render_still(&gpu.device, &gpu.queue, &mut renderer, &scene, settings, |_| true)
-        .ok_or("cancelled")?;
+    let image = render_still(
+        &gpu.device,
+        &gpu.queue,
+        &mut renderer,
+        &scene,
+        settings,
+        |_| true,
+    )
+    .ok_or("cancelled")?;
     let pixels: Vec<u8> = image
         .pixels
         .iter()

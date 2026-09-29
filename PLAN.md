@@ -184,6 +184,22 @@ every preset headlessly to `renders/presets/`.
 - Not done: density estimation (adaptive blur of sparse areas), import of
   Apophysis / JWildfire `.flame` files.
 
+## Random 3D fractals notes
+
+- `formulas::random_fractal`: single formulas or 2–3 formula hybrids
+  (built-ins only, Pseudo-Kleinian excluded), parameters mostly near their
+  defaults, Julia mode sometimes; `mutate_fractal` nudges parameters.
+- `render::find_random_fractal` (worker thread): each candidate is rendered
+  at 128×96 with the guide pass and measured (coverage, normal detail,
+  normal spread, extent, border contact). The camera backs off / closes in
+  and re-aims at the surface centroid until the fractal spans ~80% of the
+  frame. First acceptable candidate wins, else the best of 24. Then a
+  random palette and color source; the app fits the gradient.
+  Thresholds were tuned on the presets (which must pass) and random seeds:
+  typically 1–3 tries, well under a second.
+- History (◀ ▶ next to the 3D/Flame switch) covers Random, Mutate and
+  presets for both 3D fractals and flames.
+
 ## Environment setup
 
 - Rust stable (pinned via `rust-toolchain.toml`).

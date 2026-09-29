@@ -10,7 +10,9 @@ use crate::export_ui::{ExportContext, ExportDialog};
 use crate::flame_ui::FlameEditor;
 use crate::formulas_ui::{FormulasPanel, formula_problems, user_formula_dir};
 use crate::fractal_ui::fractal_editor;
+use crate::history::History;
 use crate::movie_ui::MovieDialog;
+use crate::random_job::RandomJob;
 use crate::timeline_ui::{Timeline, draw_camera_path};
 
 const SCENE_KEY: &str = "scene";
@@ -59,6 +61,14 @@ pub struct FractalApp {
     renderer: RaymarchRenderer,
     flame_renderer: FlameRenderer,
     flame_editor: FlameEditor,
+    /// Back / forward through generated scenes.
+    history: History,
+    random_job: Option<RandomJob>,
+    /// GPU handles for starting background jobs from the panel.
+    wgpu: Option<egui_wgpu::RenderState>,
+    /// Outcome of the last random search, shown under the buttons.
+    random_message: Option<String>,
+    next_seed: u64,
     library: Library,
     shader_key: Option<ShaderKey>,
     /// Composition problem for the current fractal, shown in the panel.
@@ -121,6 +131,13 @@ impl FractalApp {
             renderer: RaymarchRenderer::new(&rs.device),
             flame_renderer: FlameRenderer::new(&rs.device),
             flame_editor: FlameEditor::default(),
+            history: History::default(),
+            random_job: None,
+            wgpu: None,
+            random_message: None,
+            next_seed: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64),
             library,
             shader_key: None,
             formula_error: None,
@@ -155,6 +172,23 @@ impl FractalApp {
             let kind = &mut self.scene.kind;
             ui.selectable_value(kind, FractalKind::Distance, "3D fractal");
             ui.selectable_value(kind, FractalKind::Flame, "Flame");
+            ui.separator();
+            let back = ui
+                .add_enabled(self.history.can_go_back(), egui::Button::new("◀"))
+                .on_hover_text("Previous result (Random, Mutate, presets)");
+            if back.clicked()
+                && let Some(scene) = self.history.back(&self.scene)
+            {
+                self.scene = scene;
+            }
+            let forward = ui
+                .add_enabled(self.history.can_go_forward(), egui::Button::new("▶"))
+                .on_hover_text("Next result");
+            if forward.clicked()
+                && let Some(scene) = self.history.forward()
+            {
+                self.scene = scene;
+            }
         });
         ui.separator();
 
@@ -173,7 +207,12 @@ impl FractalApp {
             FractalKind::Flame => {
                 egui::CollapsingHeader::new("Flame")
                     .default_open(true)
-                    .show(ui, |ui| self.flame_editor.ui(ui, &mut self.scene.flame));
+                    .show(ui, |ui| {
+                        let before = self.scene.clone();
+                        if self.flame_editor.ui(ui, &mut self.scene.flame) {
+                            self.history.record(&before, &self.scene);
+                        }
+                    });
                 self.color_section(ui);
                 self.display_section(ui);
                 self.performance_section(ui);
@@ -258,12 +297,104 @@ impl FractalApp {
                             ui.label(egui::RichText::new(error).monospace().color(error_color));
                         });
                 }
+                self.random_buttons(ui);
                 if let Some(preset) = fractal_editor(ui, &mut self.scene.fractal, &self.library) {
+                    let before = self.scene.clone();
                     preset.apply(&mut self.scene);
+                    self.history.record(&before, &self.scene);
                     self.request_fit();
                     self.camera_control.orbit_target = glam::DVec3::ZERO;
                 }
             });
+    }
+
+    fn seed(&mut self) -> u64 {
+        self.next_seed = self
+            .next_seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        self.next_seed
+    }
+
+    fn random_buttons(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if let Some(job) = &self.random_job {
+                ui.spinner();
+                ui.label(format!(
+                    "Searching… try {} of {}",
+                    job.attempt().max(1),
+                    render::MAX_ATTEMPTS
+                ));
+                if ui.button("Cancel").clicked() {
+                    job.cancel();
+                }
+                return;
+            }
+            let random = ui.button("🎲 Random").on_hover_text(
+                "A new random fractal and colors, tested so it is neither empty nor a blob, \
+                 and framed. Lighting and render settings are kept.",
+            );
+            if random.clicked()
+                && let Some(rs) = self.wgpu.clone()
+            {
+                let seed = self.seed();
+                self.random_job = Some(RandomJob::start(&rs.device, &rs.queue, &self.scene, seed));
+                self.random_message = None;
+            }
+            if ui
+                .button("Mutate")
+                .on_hover_text("Nudge the current fractal's parameters a little")
+                .clicked()
+            {
+                let before = self.scene.clone();
+                let seed = self.seed();
+                self.scene.fractal =
+                    formulas::mutate_fractal(&self.scene.fractal, &self.library, seed, 0.04);
+                self.history.record(&before, &self.scene);
+            }
+        });
+        if let Some(message) = &self.random_message {
+            ui.weak(message);
+        }
+    }
+
+    /// Applies a finished random search.
+    fn poll_random_job(&mut self) {
+        let Some(result) = self.random_job.as_ref().and_then(RandomJob::poll) else {
+            return;
+        };
+        self.random_job = None;
+        match result {
+            Ok(result) => {
+                let before = self.scene.clone();
+                self.scene = result.scene;
+                self.history.record(&before, &self.scene);
+                self.camera_control.orbit_target = result.stats.centroid.unwrap_or_default();
+                self.request_fit();
+                let formulas: Vec<String> = self
+                    .scene
+                    .fractal
+                    .slots
+                    .iter()
+                    .map(|s| {
+                        self.library
+                            .get(&s.formula)
+                            .map_or(s.formula.clone(), |d| d.name.clone())
+                    })
+                    .collect();
+                self.random_message = Some(format!(
+                    "{}{}",
+                    formulas.join(" + "),
+                    if result.accepted {
+                        String::new()
+                    } else {
+                        " (best of the tries; press again for another)".to_owned()
+                    }
+                ));
+            }
+            Err(error) if error == "cancelled" => self.random_message = None,
+            Err(error) => self.random_message = Some(error),
+        }
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -357,7 +488,9 @@ impl FractalApp {
             return;
         }
         if let Some((lo, hi)) = probe.color_range {
+            let before = self.scene.clone();
             self.scene.coloring.fit_to_range(lo, hi);
+            self.history.amend(&before, &self.scene);
         }
         self.fit_from_frame = None;
     }
@@ -729,6 +862,11 @@ impl FractalApp {
 
 impl eframe::App for FractalApp {
     fn ui(&mut self, root: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.wgpu = frame.wgpu_render_state().cloned();
+        self.poll_random_job();
+        if self.random_job.is_some() {
+            root.ctx().request_repaint_after(Duration::from_millis(100));
+        }
         egui::Panel::top("menu").show(root, |ui| self.menu_bar(ui));
 
         let now = Instant::now();

@@ -21,7 +21,9 @@
 mod compose;
 mod library;
 mod presets;
+mod random;
 
 pub use compose::{ComposeError, compose};
 pub use library::{FormulaDef, Library, Origin, ParamDef, formula_template, parse_formula};
 pub use presets::{Preset, presets};
+pub use random::{mutate_fractal, random_fractal};

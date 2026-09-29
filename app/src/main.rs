@@ -7,7 +7,9 @@ mod export_ui;
 mod flame_ui;
 mod formulas_ui;
 mod fractal_ui;
+mod history;
 mod movie_ui;
+mod random_job;
 mod timeline_ui;
 
 use std::sync::Arc;

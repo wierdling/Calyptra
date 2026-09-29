@@ -314,7 +314,7 @@ fn denoise_image(
 }
 
 /// Blocking read of a float RGBA texture (Rgba32Float).
-fn read_texture(
+pub(crate) fn read_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
